@@ -23,8 +23,10 @@ fn ctl(socket: &std::path::Path, request: &str) -> serde_json::Value {
 
 fn active_nsids(payload: &[u8]) -> Vec<u32> {
     payload
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| u32::from_le_bytes(c))
         .take_while(|&n| n != 0)
         .collect()
 }
