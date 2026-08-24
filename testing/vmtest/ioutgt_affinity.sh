@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# vmtest-desc: ioutgt spread_cpus IO-thread placement on a multi-NUMA guest
+# vmtest-requires: root
+#
 # Guest-side CPU-affinity test: run ioutgt (pinning is default-on)
 # guest (vmtest.conf: VMTEST_NUMA_NODES > 1) and verify the userspace
 # spread_cpus placement against the guest's /sys topology:
@@ -7,9 +11,18 @@
 #   - every node serves at least one IO thread
 #   - each IO thread really pinned to the one group CPU from the log
 #
-# Sourced by the vmtest wrapper (tests/ioutgt_affinity.sh); expects
-# lib/common.sh helpers and config already loaded.
+# Self-contained: run it by path, e.g.
+#
+#   testing/run_affinity.sh
+#   ~/git/utils/vmtest/vmtest -c <conf> run "$PWD/testing/vmtest/ioutgt_affinity.sh"
 set -eu
+
+# Outside the vmtest checkout, so lib/ comes via VMTEST_DIR (run_vm
+# exports it into the guest).
+. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
+vt_load_config
+vt_require_root
+vt_install_trap
 
 # Expand a sysfs cpulist ("0-3,8,10-11") to one CPU per line.
 ioutgt_expand_cpulist() {
@@ -189,3 +202,11 @@ want: $(tr '\n' ' ' <<<"$want")"
 
     vt_pass "affinity: $io_threads threads node-pure over $nodes nodes, all CPUs covered, list affinity verified"
 }
+
+# Runnable directly (vmtest run <path>) and still sourceable as a library
+# by a tests/ stub -- the guard keeps a stub from running us twice.
+# An `if` (not `&&`) so a false test cannot return 1 into a sourcing
+# script's `set -e`.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    ioutgt_run_affinity
+fi
