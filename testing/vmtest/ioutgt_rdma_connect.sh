@@ -1,6 +1,7 @@
 #!/bin/bash
 # vmtest-desc: ioutgt NVMe/RDMA `nvme connect` bring-up over soft-RoCE (rxe)
 # vmtest-requires: root
+# vmtest-prepare: testing/common/prepare_rdma_connect.sh
 #
 # Brings up a soft-RoCE device on the guest NIC, starts the ioutgt-nvme-rdma
 # target binary on it, and drives the in-kernel nvme-rdma host through

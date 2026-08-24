@@ -13,24 +13,10 @@ cd "$TOP"
 # Take the LIB test harness path from cargo itself: the deps/ glob is ambiguous
 # (the package's clap bin also lands there as ioutgt_nvme_rdma-<hash>, and
 # picking it by mtime hands the guest a binary that rejects --test-threads).
-# IOUTGT_RDMA_TEST_BIN pins a specific harness (bisecting, or a build
-# from elsewhere). It belongs here rather than in the guest script: the
-# guest sees only run_vm's fixed GUEST_ENV, so an IOUTGT_* value exported
-# for the VM would never reach it.
-BIN="${IOUTGT_RDMA_TEST_BIN:-}"
-if [ -z "$BIN" ]; then
-    BIN=$(cargo test -p ioutgt-nvme-rdma --no-run --message-format=json \
-        | jq -r 'select(.executable != null and .target.kind == ["lib"]) | .executable' | tail -1)
-fi
-[ -n "$BIN" ] && [ -x "$BIN" ] || { echo "FAIL: no ioutgt-nvme-rdma test binary built"; exit 1; }
+# Selecting the harness and publishing it is shared with run_vmtest.sh,
+# which runs the same helper from the test's vmtest-prepare header.
 
-# Only cargo can tell the lib test harness from the other
-# ioutgt_nvme_rdma-<hash> executables in deps/, so publish the choice
-# through the marker dir the guest reads (as run_interop.sh does for the
-# t/io_uring probe). Everything else the script works out from its own
-# path, so it takes no arguments.
-mkdir -p "$VMTEST_DATA_DIR/tmp"
-echo "$BIN" > "$VMTEST_DATA_DIR/tmp/ioutgt_rdma_test_bin"
+"$TOP/testing/common/prepare_rdma_loopback.sh"
 trap 'rm -f "$VMTEST_DATA_DIR/tmp/ioutgt_rdma_test_bin"' EXIT
 
 "$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_rdma_loopback.sh"
