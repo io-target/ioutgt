@@ -2,8 +2,9 @@
 # Guest-side M4 interop test: nvme discover/connect/identify/disconnect
 # against an ioutgt target running on the host (slirp: 10.0.2.2).
 #
-# Sourced by the vmtest wrapper (tests/ioutgt_nvme_tcp.sh); expects
-# lib/common.sh helpers and config already loaded.
+# A sourced library, not a runnable test: expects lib/common.sh helpers
+# and config already loaded. Entry points live in testing/vmtest/
+# (run_nvme_tcp.sh, run_fio.sh).
 set -eu
 
 ADDR="${IOUTGT_ADDR:-10.0.2.2}"

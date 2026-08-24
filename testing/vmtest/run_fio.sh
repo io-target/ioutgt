@@ -12,7 +12,7 @@ vt_require_root
 vt_install_trap
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-. "$HERE/ioutgt_connect.sh"
+. "$HERE/../common/ioutgt_connect.sh"
 
 ioutgt_run_m5
 ioutgt_mark "PASS fio-verify"
