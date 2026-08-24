@@ -1,6 +1,7 @@
 #!/bin/bash
 # vmtest-desc: ioutgt NVMe/RDMA verbs rxe-loopback functional test
 # vmtest-requires: root
+# vmtest-prepare: testing/common/prepare_rdma_loopback.sh
 set -u
 # Run by path from the ioutgt tree: this file is testing/vmtest/<me>, so
 # the repo root is two levels up.

@@ -173,6 +173,23 @@ for t in "${TESTS[@]}"; do
     name="$(basename "${t%.sh}")"
     echo
     echo "=== RUN  ${t#$TOP/} $*"
+    # A test may name a host-side setup step it cannot do from inside the
+    # guest -- building a binary, or publishing a path through the marker
+    # dir. Run it here rather than teaching this script about any
+    # particular test.
+    prep="$(sed -n 's/^# vmtest-prepare:[[:space:]]*//p' "$t" | head -1)"
+    if [ -n "$prep" ]; then
+        set +e
+        ( cd "$TOP" && "$TOP/$prep" )
+        prc=$?
+        set -e
+        if [ $prc -ne 0 ]; then
+            echo "=== FAIL ${t#$TOP/} (prepare failed: $prep)"
+            FAILED+=("${t#$TOP/}")
+            RC=1
+            continue
+        fi
+    fi
     set +e
     if [ -n "$LOG_DIR" ]; then
         "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@" > "$LOG_DIR/$name.log" 2>&1
