@@ -10,3 +10,16 @@ VMTEST="${VMTEST:-$HOME/git/utils/vmtest/vmtest}"
 _VMTEST_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VMTEST_CONF="${VMTEST_CONF:-$_VMTEST_SH_DIR/vmtest.conf}"
 unset _VMTEST_SH_DIR
+
+# Where the VM images and the host<->guest marker dir live. The runners
+# need this on the HOST, but the config file that sets it is sourced by
+# vt_load_config inside the vmtest child -- so a conf-set value never
+# reaches us on its own. Ask vmtest to resolve it, which applies the full
+# environment > conf > built-in-default chain exactly once, and export it
+# so the child agrees with us.
+if [ -z "${VMTEST_DATA_DIR:-}" ]; then
+    VMTEST_DATA_DIR="$("$VMTEST" -c "$VMTEST_CONF" config 2>/dev/null |
+        sed -n 's/^VMTEST_DATA_DIR *= *//p')"
+fi
+: "${VMTEST_DATA_DIR:?could not resolve VMTEST_DATA_DIR from $VMTEST_CONF}"
+export VMTEST_DATA_DIR

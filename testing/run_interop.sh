@@ -45,7 +45,7 @@ RECV_BUF_ARGS=()
 [ -n "${IOUTGT_RECV_BUF_MB:-}" ] && RECV_BUF_ARGS=(--recv-buf-mb "$IOUTGT_RECV_BUF_MB")
 
 CTL_SOCK="$TOP/target/ioutgt-interop.sock"
-MARKER_DIR="$(dirname "$VMTEST")/data/tmp"
+MARKER_DIR="$VMTEST_DATA_DIR/tmp"
 PID_FILE="$TOP/target/ioutgt-interop.pid"
 
 # Kill the target (and watcher) however the script exits: a surviving

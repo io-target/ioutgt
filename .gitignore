@@ -14,3 +14,5 @@ flamegraph*.svg
 # comes from the environment).
 !testing/common/vmtest.conf
 *~
+# vmtest VM images + host<->guest markers (see testing/common/vmtest.conf)
+/testing/vmtest/data/
