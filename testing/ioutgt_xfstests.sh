@@ -25,12 +25,12 @@
 # other isolates the target implementation (the generic/794 baseline).
 # All remaining arguments pass through verbatim to xfstests `./check`
 # (default `-g quick` when none are given), e.g.:
-#   testing/vmtest/ioutgt_xfstests.sh                 # ioutgt, ./check -g quick
-#   testing/vmtest/ioutgt_xfstests.sh nvmet           # nvmet baseline, -g quick
-#   testing/vmtest/ioutgt_xfstests.sh nvmet generic/794
-#   testing/vmtest/ioutgt_xfstests.sh -g auto         # a different group
-#   testing/vmtest/ioutgt_xfstests.sh generic/013 generic/020
-#   testing/vmtest/ioutgt_xfstests.sh -x dio -g quick # exclude a group
+#   testing/ioutgt_xfstests.sh                 # ioutgt, ./check -g quick
+#   testing/ioutgt_xfstests.sh nvmet           # nvmet baseline, -g quick
+#   testing/ioutgt_xfstests.sh nvmet generic/794
+#   testing/ioutgt_xfstests.sh -g auto         # a different group
+#   testing/ioutgt_xfstests.sh generic/013 generic/020
+#   testing/ioutgt_xfstests.sh -x dio -g quick # exclude a group
 #
 # Host knobs (env): VMTEST, VMTEST_CONF (default ~/git/linux-ioutgt/vmtest.conf),
 #   IOUTGT_PROFILE (release|debug, default release),
@@ -65,7 +65,7 @@ if [ "${1:-}" != "--guest" ]; then
 	# (default -g quick). Captured before we touch the positionals below.
 	CHECK_ARGS=("$@")
 	[ ${#CHECK_ARGS[@]} -eq 0 ] && CHECK_ARGS=(-g quick)
-	TOP="$(cd "$(dirname "$0")/../.." && pwd)"
+	TOP="$(cd "$(dirname "$0")/.." && pwd)"
 	cd "$TOP"
 	. "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF (env-overridable)
 	PROFILE="${IOUTGT_PROFILE:-release}"
@@ -87,7 +87,7 @@ if [ "${1:-}" != "--guest" ]; then
 
 	# vmtest runs tests/NAME.sh; publish this entrypoint under that name. The
 	# guest sees the built binaries at their host absolute paths via 9p.
-	cp "$TOP/testing/vmtest/ioutgt_xfstests.sh" \
+	cp "$TOP/testing/ioutgt_xfstests.sh" \
 		"$(dirname "$VMTEST")/tests/ioutgt_xfstests.sh"
 	# Hard wall-clock cap on the whole VM: if a target wedges (e.g. an RDMA
 	# error-recovery hang leaves a test in uninterruptible sleep), ./check
