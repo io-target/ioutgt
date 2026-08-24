@@ -24,4 +24,4 @@ trap 'rm -f "$MARKER_DIR/ioutgt_top"' EXIT
 trap 'exit 129' INT TERM
 echo "$TOP" > "$MARKER_DIR/ioutgt_top"
 
-"$VMTEST" -c "$VMTEST_CONF" run ioutgt_affinity
+"$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_affinity.sh"
