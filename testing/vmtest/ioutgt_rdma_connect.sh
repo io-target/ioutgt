@@ -7,8 +7,17 @@
 # discover -> connect -> identify -> a namespace read -> disconnect. The
 # write-data path is not implemented yet (RD4), so IO here is read-only.
 set -u
-BIN="${1:?usage: ioutgt_rdma_connect <target-binary> <repo-top>}"
-REPO_TOP="${2:?usage: ioutgt_rdma_connect <target-binary> <repo-top>}"
+# Run by path from the ioutgt tree, so we can locate ourselves: this file
+# is testing/vmtest/<me>, making the repo root two levels up. The target
+# binary is built on the host by testing/run_rdma_connect.sh and reached
+# over 9p at its host path.
+REPO_TOP="$(cd "$(dirname "$0")/../.." && pwd)"
+BIN="${IOUTGT_RDMA_BIN:-$REPO_TOP/target/debug/ioutgt-nvme-rdma}"
+[ -x "$BIN" ] || {
+    echo "[rdma] RESULT: FAIL (no target binary at $BIN"
+    echo "       build it first: cargo build -p ioutgt-nvme-rdma --bin ioutgt-nvme-rdma)"
+    exit 1
+}
 NQN="nqn.2025-01.io.ioutgt:rdma"
 PORT=4420
 LOG=/tmp/ioutgt-rdma.log

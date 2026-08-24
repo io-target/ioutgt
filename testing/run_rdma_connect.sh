@@ -15,7 +15,7 @@ cargo build -p ioutgt-nvme-rdma --bin ioutgt-nvme-rdma
 BIN="$TOP/target/debug/ioutgt-nvme-rdma"
 [ -x "$BIN" ] || { echo "FAIL: ioutgt-nvme-rdma binary not built"; exit 1; }
 
-# Publish the guest entrypoint into the vmtest tests dir (vmtest runs tests/NAME.sh).
-cp "$TOP/testing/vmtest/ioutgt_rdma_connect.sh" "$(dirname "$VMTEST")/tests/ioutgt_rdma_connect.sh"
-
-exec "$VMTEST" -c "$VMTEST_CONF" run ioutgt_rdma_connect "$BIN" "$TOP"
+# Run the in-tree script by path: no copy into the vmtest checkout, and
+# the guest keeps $0 inside this repo so the script finds the tree (and
+# the binary) itself instead of taking them as arguments.
+exec "$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_rdma_connect.sh"

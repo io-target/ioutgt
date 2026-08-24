@@ -17,7 +17,13 @@ BIN=$(cargo test -p ioutgt-nvme-rdma --no-run --message-format=json \
     | jq -r 'select(.executable != null and .target.kind == ["lib"]) | .executable' | tail -1)
 [ -n "$BIN" ] && [ -x "$BIN" ] || { echo "FAIL: no ioutgt-nvme-rdma test binary built"; exit 1; }
 
-# Publish the guest entrypoint into the vmtest tests dir (vmtest runs tests/NAME.sh).
-cp "$TOP/testing/vmtest/ioutgt_rdma_loopback.sh" "$(dirname "$VMTEST")/tests/ioutgt_rdma_loopback.sh"
+# Only cargo can tell the lib test harness from the other
+# ioutgt_nvme_rdma-<hash> executables in deps/, so publish the choice
+# through the marker dir the guest reads (as run_interop.sh does for the
+# t/io_uring probe). Everything else the script works out from its own
+# path, so it takes no arguments.
+mkdir -p "$VMTEST_DATA_DIR/tmp"
+echo "$BIN" > "$VMTEST_DATA_DIR/tmp/ioutgt_rdma_test_bin"
+trap 'rm -f "$VMTEST_DATA_DIR/tmp/ioutgt_rdma_test_bin"' EXIT
 
-exec "$VMTEST" -c "$VMTEST_CONF" run ioutgt_rdma_loopback "$BIN" "$TOP"
+"$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_rdma_loopback.sh"

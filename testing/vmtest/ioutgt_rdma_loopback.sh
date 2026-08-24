@@ -2,8 +2,20 @@
 # vmtest-desc: ioutgt NVMe/RDMA verbs rxe-loopback functional test
 # vmtest-requires: root
 set -u
-BIN="${1:?usage: ioutgt_rdma_loopback <test-binary-path> <repo-top>}"
-REPO_TOP="${2:?usage: ioutgt_rdma_loopback <test-binary-path> <repo-top>}"
+# Run by path from the ioutgt tree: this file is testing/vmtest/<me>, so
+# the repo root is two levels up.
+REPO_TOP="$(cd "$(dirname "$0")/../.." && pwd)"
+# The lib test harness cannot be picked out in here: cargo drops several
+# ioutgt_nvme_rdma-<hash> executables into target/debug/deps and they all
+# answer --list, so only cargo's own metadata distinguishes them. The
+# host side selects it and publishes the path through the marker dir,
+# the same channel run_interop.sh uses for the t/io_uring probe.
+BIN="${IOUTGT_RDMA_TEST_BIN:-$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_rdma_test_bin" 2>/dev/null || true)}"
+[ -n "$BIN" ] && [ -x "$BIN" ] || {
+    echo "[rdma] RESULT: FAIL (no test binary; run testing/run_rdma_loopback.sh,"
+    echo "       or set IOUTGT_RDMA_TEST_BIN)"
+    exit 1
+}
 echo "[rdma] loading rdma_rxe"
 # shellcheck source=../common/rxe.sh
 . "$REPO_TOP/testing/common/rxe.sh"
