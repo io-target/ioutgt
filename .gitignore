@@ -7,5 +7,10 @@ flamegraph*.svg
 /.codegraph/
 /docs/superpowers/
 *.swp
+# Local scratch configs (nvmetcli, spdk, ...) stay out of the tree.
 *.conf
+# ...except the vmtest config the VM tests default to, which ships
+# with the repo so a fresh checkout can run them (KERNEL_DIR still
+# comes from the environment).
+!testing/vmtest/vmtest.conf
 *~
