@@ -32,9 +32,10 @@
 #   testing/ioutgt_xfstests.sh generic/013 generic/020
 #   testing/ioutgt_xfstests.sh -x dio -g quick # exclude a group
 #
-# Host knobs (env): VMTEST, VMTEST_CONF (default ~/git/linux-ioutgt/vmtest.conf),
+# Host knobs (env): KERNEL_DIR (kernel tree to boot; overrides the conf),
+#   VMTEST, VMTEST_CONF (default testing/common/vmtest.conf),
 #   IOUTGT_PROFILE (release|debug, default release),
-#   IOUTGT_XFSTESTS_TIMEOUT (outer VM wall-clock cap, default 90m).
+#   IOUTGT_XFSTESTS_TIMEOUT (outer VM wall-clock cap, default 200m).
 # Guest knobs (env): IMG_SIZE (default 8G), RUST_LOG (default info).
 # Artifacts: xfstests results/ (check.log, per-test .full/.out.bad) is copied
 # to $VMTEST_DATA_DIR/tmp/xfstests-results-<mode> (per mode, so an
