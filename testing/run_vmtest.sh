@@ -190,13 +190,20 @@ for t in "${TESTS[@]}"; do
             continue
         fi
     fi
+    # Pipe through cat rather than redirecting straight to the file. The
+    # VM's console output is not written sequentially: given a regular
+    # file it seeks back to the start, so a plain > loses the boot
+    # messages under later output (and >> does not help -- the writer
+    # reopens the file instead of using our O_APPEND handle). A pipe
+    # cannot be seeked at all, so everything arrives in order and cat
+    # appends it. PIPESTATUS keeps the test's own exit code.
     set +e
     if [ -n "$LOG_DIR" ]; then
-        "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@" > "$LOG_DIR/$name.log" 2>&1
+        "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@" 2>&1 | cat >> "$LOG_DIR/$name.log"
     else
-        "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@"
+        "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@" 2>&1 | cat
     fi
-    trc=$?
+    trc=${PIPESTATUS[0]}
     set -e
     if [ $trc -eq 0 ]; then
         echo "=== OK   ${t#$TOP/}"
