@@ -15,7 +15,7 @@ cargo build --release --manifest-path "$TOP/Cargo.toml" -p ioutgt-nvme-tcp
 # does not cross into the VM, the 9p marker directory does. Honour a
 # VMTEST_DATA_DIR override (lets this run beside another vmtest VM,
 # which holds locks on the default data dir's disk images).
-MARKER_DIR="${VMTEST_DATA_DIR:-$(dirname "$VMTEST")/data}/tmp"
+MARKER_DIR="$VMTEST_DATA_DIR/tmp"
 mkdir -p "$MARKER_DIR"
 # The target runs inside the guest, so there is no host-side process to
 # reap — only the marker, dropped on exit so a later manual vmtest run
