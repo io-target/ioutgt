@@ -10,12 +10,22 @@ REPO_TOP="$(cd "$(dirname "$0")/../.." && pwd)"
 # answer --list, so only cargo's own metadata distinguishes them. The
 # host side selects it and publishes the path through the marker dir,
 # the same channel run_interop.sh uses for the t/io_uring probe.
-BIN="${IOUTGT_RDMA_TEST_BIN:-$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_rdma_test_bin" 2>/dev/null || true)}"
+# Read it from the marker, not from the environment: only a fixed set of
+# variables crosses into the guest (run_vm's GUEST_ENV), so an IOUTGT_*
+# override set here would never arrive. The launcher honours
+# IOUTGT_RDMA_TEST_BIN on the host and writes the result below.
+BIN="$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_rdma_test_bin" 2>/dev/null || true)"
 [ -n "$BIN" ] && [ -x "$BIN" ] || {
-    echo "[rdma] RESULT: FAIL (no test binary; run testing/run_rdma_loopback.sh,"
-    echo "       or set IOUTGT_RDMA_TEST_BIN)"
+    echo "[rdma] RESULT: FAIL (no test binary published at"
+    echo "       \$VMTEST_DATA_DIR/tmp/ioutgt_rdma_test_bin)"
+    echo "       run testing/run_rdma_loopback.sh -- it selects the lib test"
+    echo "       harness with cargo and publishes it; IOUTGT_RDMA_TEST_BIN"
+    echo "       overrides that choice, set on the HOST."
     exit 1
 }
+# Say which harness we got: with the path chosen on the host there is
+# otherwise no way to tell from the run whether an override took effect.
+echo "[rdma] test binary: $BIN"
 echo "[rdma] loading rdma_rxe"
 # shellcheck source=../common/rxe.sh
 . "$REPO_TOP/testing/common/rxe.sh"

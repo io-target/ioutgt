@@ -13,8 +13,15 @@ cd "$TOP"
 # Take the LIB test harness path from cargo itself: the deps/ glob is ambiguous
 # (the package's clap bin also lands there as ioutgt_nvme_rdma-<hash>, and
 # picking it by mtime hands the guest a binary that rejects --test-threads).
-BIN=$(cargo test -p ioutgt-nvme-rdma --no-run --message-format=json \
-    | jq -r 'select(.executable != null and .target.kind == ["lib"]) | .executable' | tail -1)
+# IOUTGT_RDMA_TEST_BIN pins a specific harness (bisecting, or a build
+# from elsewhere). It belongs here rather than in the guest script: the
+# guest sees only run_vm's fixed GUEST_ENV, so an IOUTGT_* value exported
+# for the VM would never reach it.
+BIN="${IOUTGT_RDMA_TEST_BIN:-}"
+if [ -z "$BIN" ]; then
+    BIN=$(cargo test -p ioutgt-nvme-rdma --no-run --message-format=json \
+        | jq -r 'select(.executable != null and .target.kind == ["lib"]) | .executable' | tail -1)
+fi
 [ -n "$BIN" ] && [ -x "$BIN" ] || { echo "FAIL: no ioutgt-nvme-rdma test binary built"; exit 1; }
 
 # Only cargo can tell the lib test harness from the other

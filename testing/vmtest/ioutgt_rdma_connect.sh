@@ -12,10 +12,10 @@ set -u
 # binary is built on the host by testing/run_rdma_connect.sh and reached
 # over 9p at its host path.
 REPO_TOP="$(cd "$(dirname "$0")/../.." && pwd)"
-BIN="${IOUTGT_RDMA_BIN:-$REPO_TOP/target/debug/ioutgt-nvme-rdma}"
+BIN="$REPO_TOP/target/debug/ioutgt-nvme-rdma"
 [ -x "$BIN" ] || {
-    echo "[rdma] RESULT: FAIL (no target binary at $BIN"
-    echo "       build it first: cargo build -p ioutgt-nvme-rdma --bin ioutgt-nvme-rdma)"
+    echo "[rdma] RESULT: FAIL (no target binary at $BIN)"
+    echo "       run testing/run_rdma_connect.sh, which builds it"
     exit 1
 }
 NQN="nqn.2025-01.io.ioutgt:rdma"
