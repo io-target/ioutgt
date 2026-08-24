@@ -2,10 +2,18 @@
 # Generic runner for the guest tests in testing/vmtest/.
 #
 #   testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
-#   testing/run_vmtest.sh testing/vmtest/run_fio.sh
-#   testing/run_vmtest.sh testing/vmtest/run_nvme_tcp.sh
+#   testing/run_vmtest.sh testing/vmtest/run_fio.sh -g quick
+#   testing/run_vmtest.sh testing/vmtest/           # every test in the dir
 #
-# Takes the script's path; anything after it is passed to the test.
+# Takes a script's path, and anything after it is passed to that test; or
+# a directory, in which case every runnable script under it is run in
+# turn and a per-test OK/FAIL summary is printed. Extra arguments make no
+# sense for a directory, so they are refused rather than silently applied
+# to every test.
+#
+# "Runnable" means the file carries a `# vmtest-desc:` header: the
+# libraries under testing/common/ are sourced by an entry script, and a
+# directory sweep must not try to execute one.
 #
 # Like run_interop.sh, this stands up a host-side ioutgt target for the
 # guest to connect to at 10.0.2.2:$PORT and publishes the marker files
@@ -24,19 +32,43 @@ set -eu
 TOP="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF + VMTEST_DATA_DIR
 
+# A file carries the vmtest-desc header iff it is meant to be executed
+# rather than sourced.
+runnable() { grep -q '^# vmtest-desc:' "$1" 2>/dev/null; }
+
 [ $# -ge 1 ] || {
     echo "usage: $0 testing/vmtest/<test>.sh [args...]" >&2
+    echo "       $0 testing/vmtest/            # run them all" >&2
     echo "runnable tests:" >&2
     for f in "$TOP"/testing/vmtest/*.sh; do
-        # The libraries are sourced by an entry script, not run directly;
-        # the metadata header is what marks a file as runnable.
-        grep -q '^# vmtest-desc:' "$f" && echo "  testing/vmtest/$(basename "$f")" >&2
+        runnable "$f" && echo "  testing/vmtest/$(basename "$f")" >&2
     done
     exit 2
 }
-TEST="$1"; shift
-[ -f "$TEST" ] || { echo "no such script: $TEST" >&2; exit 2; }
-[ -x "$TEST" ] || { echo "not executable: $TEST" >&2; exit 2; }
+TARGET_ARG="${1%/}"; shift   # trailing slash would give testing/vmtest//foo.sh
+
+TESTS=()
+if [ -d "$TARGET_ARG" ]; then
+    [ $# -eq 0 ] || {
+        echo "arguments cannot be passed to a directory of tests: $*" >&2
+        exit 2
+    }
+    for f in "$TARGET_ARG"/*.sh; do
+        [ -f "$f" ] && [ -x "$f" ] && runnable "$f" && TESTS+=("$f")
+    done
+    [ ${#TESTS[@]} -gt 0 ] || { echo "no runnable tests in $TARGET_ARG" >&2; exit 2; }
+else
+    [ -f "$TARGET_ARG" ] || { echo "no such script or directory: $TARGET_ARG" >&2; exit 2; }
+    [ -x "$TARGET_ARG" ] || { echo "not executable: $TARGET_ARG" >&2; exit 2; }
+    # Refuse a library here rather than boot a VM to watch it die on the
+    # first vt_* call: sourced files define helpers and invoke nothing.
+    runnable "$TARGET_ARG" || {
+        echo "not a runnable test (no '# vmtest-desc:' header): $TARGET_ARG" >&2
+        echo "sourced libraries are run through an entry script in testing/vmtest/" >&2
+        exit 2
+    }
+    TESTS=("$TARGET_ARG")
+fi
 
 PORT="${IOUTGT_PORT:-14420}"
 LOG="$TOP/target/ioutgt-vmtest.log"
@@ -120,13 +152,54 @@ for _ in $(seq 50); do
     kill -0 $TARGET_PID 2>/dev/null || { cat "$LOG"; echo "target died"; exit 1; }
     sleep 0.1
 done
-echo "ioutgt up (pid $TARGET_PID); running ${TEST#$TOP/} $*"
+echo "ioutgt up (pid $TARGET_PID); ${#TESTS[@]} test(s) to run"
 
-set +e
-"$VMTEST" -c "$VMTEST_CONF" run "$TEST" "$@"
-RC=$?
-set -e
+# Sweeping a directory, each test's output goes to its own file rather
+# than the console. Not just for tidiness: vmtest's VM writes its console
+# output starting at offset 0 of whatever it is redirected to, so with
+# every test sharing one stream the next boot overwrites the previous
+# test's output *and* the RUN/OK/FAIL lines around it. Per-test files
+# keep the console stream to the markers alone, which nothing clobbers.
+LOG_DIR=""
+if [ ${#TESTS[@]} -gt 1 ]; then
+    LOG_DIR="$TOP/target/vmtest-logs"
+    rm -rf "$LOG_DIR"
+    mkdir -p "$LOG_DIR"
+fi
 
-echo "--- target log ---"
-tail -30 "$LOG"
+FAILED=()
+RC=0
+for t in "${TESTS[@]}"; do
+    name="$(basename "${t%.sh}")"
+    echo
+    echo "=== RUN  ${t#$TOP/} $*"
+    set +e
+    if [ -n "$LOG_DIR" ]; then
+        "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@" > "$LOG_DIR/$name.log" 2>&1
+    else
+        "$VMTEST" -c "$VMTEST_CONF" run "$t" "$@"
+    fi
+    trc=$?
+    set -e
+    if [ $trc -eq 0 ]; then
+        echo "=== OK   ${t#$TOP/}"
+    else
+        echo "=== FAIL ${t#$TOP/} (exit $trc)${LOG_DIR:+ -- log: ${LOG_DIR#$TOP/}/$name.log}"
+        FAILED+=("${t#$TOP/}")
+        RC=1
+    fi
+done
+
+if [ ${#TESTS[@]} -gt 1 ]; then
+    echo
+    echo "=== summary: $(( ${#TESTS[@]} - ${#FAILED[@]} ))/${#TESTS[@]} passed"
+    for f in ${FAILED+"${FAILED[@]}"}; do echo "  FAIL $f"; done
+fi
+
+if [ -n "$LOG_DIR" ]; then
+    echo "per-test logs: ${LOG_DIR#$TOP/}/"
+else
+    echo "--- target log ---"
+    tail -30 "$LOG"
+fi
 exit $RC
