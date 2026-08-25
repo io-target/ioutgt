@@ -33,11 +33,19 @@ PHASE_S="${IOUTGT_TBKAS_PHASE:-20}"
 vt_require_module nvme_tcp
 vt_require_cmd nvme
 
+# The namespace of a NAMED controller. Not "the last device nvme list
+# prints": the guest also has a QEMU-emulated PCI NVMe, so that picks the
+# wrong disk whenever the fabrics controller is not last (nvme9 sorting
+# after nvme10, or a controller left over from an earlier test). Driving
+# the PCI namespace would leave the ioutgt controller idle -- and an idle
+# host still sends Keep Alives, so the test would pass without ever
+# exercising traffic-based keep-alive.
 tbkas_ns() {
-    local dev i
+    local ctrl="$1" dev i
     for i in $(seq 100); do
-        dev=$(nvme list 2>/dev/null | awk '$1 ~ /\/dev\/nvme/ {print $1}' | tail -1)
-        [ -n "$dev" ] && [ -b "$dev" ] && { echo "$dev"; return 0; }
+        for dev in /dev/${ctrl}n*; do
+            [ -b "$dev" ] && { echo "$dev"; return 0; }
+        done
         sleep 0.2
     done
     return 1
@@ -46,7 +54,10 @@ tbkas_ns() {
 # Fail if the controller reset/reconnected/dropped during a phase.
 tbkas_assert_no_reset() {
     local what="$1" since="$2" now
-    now=$(dmesg | sed -n "${since},\$p")
+    # since is the line count taken before the phase, so the new lines
+    # start at since+1; starting at $since would re-scan the last line
+    # from before the window and can report a pre-existing reconnect.
+    now=$(dmesg | sed -n "$((since + 1)),\$p")
     if echo "$now" | grep -qiE "Removing ctrl|reconnect|Reconnecting|keep.alive|I/O [0-9]+ QID|resetting controller|connection lost"; then
         echo "$now" | tail -30 >&2
         vt_die "controller disturbed during $what (see dmesg above)"
@@ -82,7 +93,7 @@ ioutgt_run_tbkas() {
     # Also confirm the kernel latched it (nvme_init_identify sets
     # NVME_CTRL_ATTR_TBKAS, which is what makes the host skip KAs).
     local dev
-    dev=$(tbkas_ns) || vt_die "namespace device missing"
+    dev=$(tbkas_ns "$ctrl") || vt_die "namespace device missing for $ctrl"
     vt_log "namespace: $dev"
 
     local mark

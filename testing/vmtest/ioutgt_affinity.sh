@@ -39,8 +39,14 @@ ioutgt_expand_cpulist() {
 
 ioutgt_run_affinity() {
     local top
-    top=$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_top" 2>/dev/null ||
-        echo "${IOUTGT_DIR:-}")
+    # BASH_SOURCE, not $0: this file is testing/vmtest/<me> whether it is
+    # executed by path or sourced from a tests/ stub, so the tree is two
+    # levels up either way. The marker is the fallback for a stub that
+    # copied us elsewhere; IOUTGT_DIR never arrives, as run_vm forwards
+    # only its own fixed set of variables into the guest.
+    top="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
+    [ -n "$top" ] && [ -d "$top/testing/vmtest" ] ||
+        top=$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_top" 2>/dev/null || true)
     [ -n "$top" ] ||
         vt_die "no ioutgt checkout (missing ioutgt_top marker and IOUTGT_DIR)"
     local bin="$top/target/release/ioutgt-nvme-tcp"
