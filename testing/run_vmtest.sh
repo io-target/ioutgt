@@ -101,7 +101,9 @@ WATCHER_PID=""
 cleanup() {
     [ -s "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null || true
     [ -n "$WATCHER_PID" ] && kill "$WATCHER_PID" 2>/dev/null || true
-    rm -f "$PID_FILE" "$MARKER_DIR/ioutgt_top"
+    # ioutgt_rdma_test_bin is published by a vmtest-prepare step; leaving
+    # it behind would let a later direct run silently use a stale harness.
+    rm -f "$PID_FILE" "$MARKER_DIR/ioutgt_top" "$MARKER_DIR/ioutgt_rdma_test_bin"
 }
 trap cleanup EXIT
 trap 'exit 129' INT TERM
@@ -168,6 +170,7 @@ if [ ${#TESTS[@]} -gt 1 ]; then
 fi
 
 FAILED=()
+SKIPPED=()
 RC=0
 for t in "${TESTS[@]}"; do
     name="$(basename "${t%.sh}")"
@@ -207,6 +210,13 @@ for t in "${TESTS[@]}"; do
     set -e
     if [ $trc -eq 0 ]; then
         echo "=== OK   ${t#$TOP/}"
+    elif [ $trc -eq 4 ]; then
+        # vmtest's documented skip status: a prerequisite the guest does
+        # not have (vt_require_cmd, vt_skip). Not a failure -- counting it
+        # as one turns a green sweep red on any box missing an optional
+        # dependency, or on a documented override like NUMA_NODES=1.
+        echo "=== SKIP ${t#$TOP/}"
+        SKIPPED+=("${t#$TOP/}")
     else
         echo "=== FAIL ${t#$TOP/} (exit $trc)${LOG_DIR:+ -- log: ${LOG_DIR#$TOP/}/$name.log}"
         FAILED+=("${t#$TOP/}")
@@ -216,7 +226,8 @@ done
 
 if [ ${#TESTS[@]} -gt 1 ]; then
     echo
-    echo "=== summary: $(( ${#TESTS[@]} - ${#FAILED[@]} ))/${#TESTS[@]} passed"
+    echo "=== summary: $(( ${#TESTS[@]} - ${#FAILED[@]} - ${#SKIPPED[@]} ))/${#TESTS[@]} passed, ${#SKIPPED[@]} skipped, ${#FAILED[@]} failed"
+    for f in ${SKIPPED+"${SKIPPED[@]}"}; do echo "  SKIP $f"; done
     for f in ${FAILED+"${FAILED[@]}"}; do echo "  FAIL $f"; done
 fi
 

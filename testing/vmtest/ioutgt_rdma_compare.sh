@@ -2,6 +2,7 @@
 # vmtest-desc: NVMe/RDMA A/B — ioutgt-nvme-rdma vs in-kernel nvmet-rdma over
 #              soft-RoCE, both driven through testing/ (common.sh TRANSPORT=rdma)
 # vmtest-requires: root nvme-cli fio
+# vmtest-prepare: testing/common/prepare_rdma_compare.sh
 #
 # Exercises the TRANSPORT=rdma parametrization of common.sh end to end in the
 # guest: brings up a soft-RoCE (rxe) device, then runs the SAME local_tgt.sh
