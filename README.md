@@ -135,6 +135,35 @@ testing/two_nic/realwire_tcp.sh down
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — benchmark methodology
   vs kernel nvmet (execution deferred).
 
+## VM testing
+
+The VM tests run against [vmtest](https://github.com/ublk-org/vmtest), a
+thin harness over [virtme-ng](https://github.com/arighi/virtme-ng).
+
+The idea: no disk image — it boots the kernel from its source tree with
+the host filesystem shared in over 9p, so a test is a root shell script
+running against your working tree in a throwaway guest. NVMe/TCP tests
+connect to a target on the host at `10.0.2.2`; the RDMA and affinity
+tests start theirs inside the guest.
+
+ioutgt's guest tests live in `testing/vmtest/`, the config it boots with
+is `testing/common/vmtest.conf`, and `KERNEL_DIR` selects the kernel
+tree:
+
+```sh
+# one test: build ioutgt, start it on the host, boot the guest, tear down
+KERNEL_DIR=~/git/linux testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
+
+# every test under a directory, each in its own VM, with a pass/fail summary
+testing/run_vmtest.sh testing/vmtest/
+
+# the M4-M8 interop matrix (discover/connect, fio --verify, filesystem)
+testing/run_interop.sh
+```
+
+Point `VMTEST` at the harness if it is not at `~/git/utils/vmtest/vmtest`,
+and `VMTEST_CONF` at a different config to override the shipped one.
+
 ## Requirements
 
 - Linux ≥ 6.11 (`DEFER_TASKRUN` + multishot era; developed on 7.1)
