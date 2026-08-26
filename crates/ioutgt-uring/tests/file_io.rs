@@ -347,3 +347,34 @@ fn fallocate_punch_hole_zeroes() {
         assert!(buf[4096..].iter().all(|&b| b == 0xAA), "data clobbered");
     });
 }
+
+#[test]
+fn block_discard_on_regular_file_is_rejected() {
+    // A regular file has no uring_cmd handler, so the kernel answers
+    // BLOCK_URING_CMD_DISCARD with an error — the round trip proves the op
+    // is wired (SQE built, CQE reaped, errno surfaced) without needing a
+    // block device; the real discard is gated in the VM.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notablockdev");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
+        .unwrap();
+    file.set_len(1 << 20).unwrap();
+    let fd = file.as_raw_fd();
+
+    let rt = QueueRuntime::new(RingConfig::default()).unwrap();
+    rt.block_on(async move {
+        let err = ops::block_discard(ops::BackendFd::Raw(fd), 0, 4096)
+            .unwrap()
+            .await
+            .expect_err("regular files do not implement uring_cmd");
+        assert!(
+            err.raw_os_error() == Some(libc::EOPNOTSUPP),
+            "unexpected errno: {err}"
+        );
+    });
+}

@@ -112,8 +112,13 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
   advertises DSM|WRITE_ZEROES (`N/admin.rs:224`) — the host believes thin
   space is reclaimed; no passthru.
 - **Effect:** on a 4Kn device the O_DIRECT path gets `EINVAL` on any
-  512-aligned-but-not-4K-aligned host IO. Roadmap names
-  `IORING_OP_URING_CMD` as the discard fix shape.
+  512-aligned-but-not-4K-aligned host IO.
+- **Partly fixed (2026-08-26):** bdev discard now goes through
+  `ops::block_discard` (`BLOCK_URING_CMD_DISCARD`) and bdev write-zeroes
+  through the fallocate chain (`blkdev_fallocate` → `blkdev_issue_zeroout`);
+  both gated by `testing/vmtest/ioutgt_bdev_discard.sh` on a loop device
+  (discard freed 32 of 64 MiB where it freed 0 before). Still open: the
+  512 B LBA size and passthru.
 
 ### 7. Namespace data features: reservations, ZNS, PI
 

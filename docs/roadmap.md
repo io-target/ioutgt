@@ -133,9 +133,13 @@ six obligations of the transport contract (setup → install → recv path
   `GET_STATS`. Queue threads and the registry need no changes;
   controllers are already keyed by (subsystem, host), not by port.
 - TLS (kTLS or userspace) for NVMe/TCP secure channels.
-- bdev discard/write-zeroes via `IORING_OP_URING_CMD`
-  (BLKDISCARD-equivalent) once a root test rig exists; NVMe
+- ~~bdev discard/write-zeroes via `IORING_OP_URING_CMD`~~ — **done**
+  (2026-08-26): `ops::block_discard` (`BLOCK_URING_CMD_DISCARD`) for DSM
+  and the fallocate chain for Write Zeroes on bdevs, gated by
+  `testing/vmtest/ioutgt_bdev_discard.sh` (root-in-guest loop device:
+  allocated blocks drop, zeroed range reads back zero). NVMe
   passthrough backend over uring-cmd to a host controller.
+- bdev LBA size from the device (`BLKSSZGET`) instead of the fixed 512 B.
 - Metadata/PI formats, Write Protect, reservations — driven by
   demand.
 
