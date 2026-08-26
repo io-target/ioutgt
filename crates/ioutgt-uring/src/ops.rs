@@ -357,6 +357,47 @@ pub fn fallocate(file: BackendFd, mode: i32, offset: u64, len: u64) -> io::Resul
     Ok(RawOp { op })
 }
 
+/// `BLOCK_URING_CMD_DISCARD` (`_IO(0x12, 0)`): the block layer's
+/// `IORING_OP_URING_CMD` discard, Linux ≥ 6.12 (`blkdev_uring_cmd`).
+const BLOCK_URING_CMD_DISCARD: u32 = 0x12 << 8;
+
+/// Discard `len` bytes of a block device at byte `offset` through the
+/// ring (`BLOCK_URING_CMD_DISCARD`) — the bdev counterpart of
+/// [`fallocate`] punch-hole. The kernel reads the range from `addr`
+/// (start) and `addr3` (length, the first 8 bytes of the 16-byte command
+/// payload); both must be logical-block aligned. `EOPNOTSUPP` means the
+/// store cannot unmap: a device without discard (`blkdev_cmd_discard`), or
+/// an fd whose `f_op` has no `uring_cmd` at all (pre-6.12 block devices,
+/// regular files — `io_uring_cmd_prep`). `EINVAL` is a misaligned, empty or
+/// past-the-end range (`blk_validate_byte_range`), never "unsupported";
+/// `EBUSY` is the bdev page cache refusing to invalidate under a racing
+/// write. None of them touch the data.
+pub fn block_discard(file: BackendFd, offset: u64, len: u64) -> io::Result<RawOp> {
+    let mut cmd = [0u8; 16];
+    cmd[..8].copy_from_slice(&len.to_ne_bytes());
+    let op = Op::submit(
+        |key| {
+            let e = match file {
+                BackendFd::Raw(fd) => {
+                    opcode::UringCmd16::new(types::Fd(fd), BLOCK_URING_CMD_DISCARD)
+                        .cmd(cmd)
+                        .addr(Some(offset))
+                        .build()
+                }
+                BackendFd::Fixed(idx) => {
+                    opcode::UringCmd16::new(types::Fixed(idx.into()), BLOCK_URING_CMD_DISCARD)
+                        .cmd(cmd)
+                        .addr(Some(offset))
+                        .build()
+                }
+            };
+            e.user_data(key)
+        },
+        Resources::None,
+    )?;
+    Ok(RawOp { op })
+}
+
 /// Receive into caller-managed memory (queue-slot buffers).
 ///
 /// # Safety

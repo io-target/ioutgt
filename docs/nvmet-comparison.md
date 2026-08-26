@@ -195,9 +195,13 @@ ONCS advertises DSM/Write Zeroes.
 lazily-allocated chunks), and one file/bdev backend — in userspace the
 two collapse to "open O_DIRECT, probe geometry differently"
 (st_size vs BLKGETSIZE64), with buffered fallback where O_DIRECT is
-refused. Discard is punch-hole on files (hint semantics) and a no-op
-on bdevs until uring-cmd lands; write-zeroes falls back
-ZERO_RANGE → PUNCH_HOLE → zero-chunk writes. Slot buffers are
+refused. Discard is punch-hole on files and `BLOCK_URING_CMD_DISCARD`
+(the block layer's `IORING_OP_URING_CMD`, Linux ≥ 6.12) on bdevs, both
+with hint semantics — a store that cannot unmap succeeds untouched, a
+store that can and fails reports the IO error; write-zeroes falls back
+ZERO_RANGE → PUNCH_HOLE → zero-chunk writes on both kinds (on a bdev
+`blkdev_fallocate` turns those into the same `blkdev_issue_zeroout`
+bios nvmet submits). Slot buffers are
 4 KiB-aligned for O_DIRECT, and teardown waits for executing slots
 (the kernel may be DMAing into slot memory) with a deliberate
 leak-on-wedge instead of a use-after-free.
@@ -222,11 +226,11 @@ and parallelize; ioutgt issues one ring op per command region
 (resuming short transfers). nvmet's FUA maps to REQ_FUA; ioutgt
 flushes after the write — correct but one round trip more expensive.
 
-**Risks.** No metadata/PI, no zoned support, bdev
-discard/write-zeroes lack the ioctl/uring-cmd path, and the bdev side
-has only been exercised through the file-backend code path plus
-geometry probing (loop-device runs need root — deferred with the
-benchmark work).
+**Risks.** No metadata/PI, no zoned support, and the LBA size is
+fixed at 512 B rather than probed from the device (a 4Kn bdev fails
+O_DIRECT on sub-4K-aligned host IO). The bdev path — including discard
+and write-zeroes reaching the store — is gated in the VM on a loop
+device (`testing/vmtest/ioutgt_bdev_discard.sh`, root in the guest).
 
 ## 6. Threading and synchronization
 

@@ -473,8 +473,11 @@ the choice is fixed at open and needs no per-store alignment probing,
 because the slot pool's buffers are page-granular and every transfer is a
 block multiple, so once O_DIRECT opens it serves every IO. (Sub-page
 buffers — which would require a `statx STATX_DIOALIGN` check — only arise
-with a zero-copy recv ring, deferred.) `FSYNC` flush, `FALLOCATE`
-punch-hole/zero-range as before. IOPOLL is not used: a polled ring cannot
+with a zero-copy recv ring, deferred.) `FSYNC` flush; `FALLOCATE`
+punch-hole/zero-range for discard/write-zeroes on files and for
+write-zeroes on bdevs; `URING_CMD` `BLOCK_URING_CMD_DISCARD` for discard
+on bdevs — all with hint semantics for stores that cannot unmap. IOPOLL
+is not used: a polled ring cannot
 carry socket ops, and a second per-thread IOPOLL ring is a measured-later
 roadmap item.
 

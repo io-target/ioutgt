@@ -94,6 +94,25 @@ fn query_dioalign(fd: RawFd) -> (u32, u32) {
     (stx.stx_dio_mem_align, stx.stx_dio_offset_align)
 }
 
+/// Deallocate is a hint, so two outcomes count as "honoured by doing
+/// nothing", like nvmet's file path (`-EOPNOTSUPP` only) and its bdev path
+/// (which never checks): `EOPNOTSUPP` — the store cannot unmap (no discard
+/// support, or no `uring_cmd` on this fd/kernel) — and `EBUSY` — a
+/// buffered bdev's page-cache invalidation lost a race with a host write.
+/// Anything else (`EINVAL` = misaligned/empty range, `EIO`, `ENOSPC`) is a
+/// real error the host must see.
+fn unmap_hint_declined(errno: Option<i32>) -> bool {
+    matches!(errno, Some(libc::EOPNOTSUPP | libc::EBUSY))
+}
+
+/// In the write-zeroes chain (`ZERO_RANGE` → `PUNCH_HOLE` → zero writes)
+/// only a mode the store lacks moves on to the next; a real error is the
+/// answer and is not retried through a slower path (nvmet issues one op
+/// per kind and returns its status).
+fn fallocate_mode_unsupported(errno: Option<i32>) -> bool {
+    errno == Some(libc::EOPNOTSUPP)
+}
+
 /// Whether to keep the opened `O_DIRECT` fd, given the store's `statx
 /// STATX_DIOALIGN` and whether the recv ring is enabled (see module docs for
 /// the ring-off vs ring-on rule).
@@ -386,19 +405,28 @@ impl Backend for FileBackend {
     }
 
     async fn discard(&self, ranges: &[LbaRange]) -> Result<(), BackendError> {
-        // Deallocate is a hint: punch holes where supported, succeed
-        // regardless (block devices need BLKDISCARD/uring-cmd — roadmap).
-        if self.kind != Kind::Regular {
-            return Ok(());
-        }
+        // Deallocate is a hint: a store that cannot unmap (no discard
+        // support, a kernel without BLOCK_URING_CMD_DISCARD) succeeds
+        // without touching the data, as nvmet's bdev path does for IDR/IDW.
+        // A store that *can* unmap and fails mid-way is a real IO error.
         for range in ranges {
             if self.check_range(range.slba, u64::from(range.nlb)).is_err() {
                 return Err(BackendError::OutOfRange);
             }
-            let mode = libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE;
+            let off = self.offset(range.slba);
             let len = u64::from(range.nlb) << self.block_shift;
-            if let Ok(op) = ops::fallocate(self.backend_fd(), mode, self.offset(range.slba), len) {
-                let _ = op.await;
+            let op = match self.kind {
+                Kind::Regular => {
+                    let mode = libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE;
+                    ops::fallocate(self.backend_fd(), mode, off, len)
+                }
+                Kind::Block => ops::block_discard(self.backend_fd(), off, len),
+            }
+            .map_err(|e| BackendError::Io(e.raw_os_error().unwrap_or(libc::EIO)))?;
+            match op.await {
+                Ok(_) => {}
+                Err(e) if unmap_hint_declined(e.raw_os_error()) => {}
+                Err(e) => return Err(map_errno(e.raw_os_error().unwrap_or(libc::EIO))),
             }
         }
         Ok(())
@@ -407,22 +435,29 @@ impl Backend for FileBackend {
     async fn write_zeroes(&self, range: LbaRange) -> Result<(), BackendError> {
         self.check_range(range.slba, u64::from(range.nlb))?;
         let len = u64::from(range.nlb) << self.block_shift;
-        if self.kind == Kind::Regular {
-            // ZERO_RANGE, then PUNCH_HOLE (reads back zeroes on files).
-            for mode in [
+        // On a block device `blkdev_fallocate` turns ZERO_RANGE into
+        // `blkdev_issue_zeroout` — device Write Zeroes with the kernel's own
+        // zero-fill fallback, the bios nvmet's write_zeroes submits — so it
+        // is the one op; a failure there is the device's answer. A regular
+        // file gets PUNCH_HOLE as a second mode (tmpfs lacks ZERO_RANGE) and
+        // then plain zero writes; only EOPNOTSUPP advances the chain.
+        let modes: &[libc::c_int] = match self.kind {
+            Kind::Block => &[libc::FALLOC_FL_ZERO_RANGE | libc::FALLOC_FL_KEEP_SIZE],
+            Kind::Regular => &[
                 libc::FALLOC_FL_ZERO_RANGE,
                 libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE,
-            ] {
-                if let Ok(op) =
-                    ops::fallocate(self.backend_fd(), mode, self.offset(range.slba), len)
-                    && op.await.is_ok()
-                {
-                    return Ok(());
-                }
+            ],
+        };
+        for &mode in modes {
+            let op = ops::fallocate(self.backend_fd(), mode, self.offset(range.slba), len)
+                .map_err(|e| BackendError::Io(e.raw_os_error().unwrap_or(libc::EIO)))?;
+            match op.await {
+                Ok(_) => return Ok(()),
+                Err(e) if fallocate_mode_unsupported(e.raw_os_error()) => {}
+                Err(e) => return Err(map_errno(e.raw_os_error().unwrap_or(libc::EIO))),
             }
         }
-        // Fallback (and the block-device path until uring-cmd discard
-        // lands): write zero chunks through the buffered fd.
+        // Every mode unsupported: write zero chunks through the fd.
         let chunk = ioutgt_core::buf::AlignedBuf::zeroed(64 * 1024);
         let mut remaining = len;
         let mut off = self.offset(range.slba);
@@ -446,7 +481,34 @@ impl Backend for FileBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::direct_usable;
+    use super::{direct_usable, fallocate_mode_unsupported, unmap_hint_declined};
+
+    #[test]
+    fn unmap_errors_are_classified_like_nvmet() {
+        // Deallocate is a hint. Only "the store cannot unmap" (EOPNOTSUPP:
+        // no discard support, no uring_cmd on this fd/kernel) and "the store
+        // declined right now" (EBUSY: bdev page-cache invalidation lost a
+        // race with a host write) are swallowed. EINVAL is a misaligned or
+        // empty range — a geometry bug that must surface, never a no-op.
+        assert!(unmap_hint_declined(Some(libc::EOPNOTSUPP)));
+        assert!(unmap_hint_declined(Some(libc::EBUSY)));
+        assert!(!unmap_hint_declined(Some(libc::EINVAL)));
+        assert!(!unmap_hint_declined(Some(libc::EIO)));
+        assert!(!unmap_hint_declined(Some(libc::ENOSPC)));
+        assert!(!unmap_hint_declined(None));
+    }
+
+    #[test]
+    fn only_unsupported_mode_advances_the_zeroing_chain() {
+        // ZERO_RANGE -> PUNCH_HOLE -> zero writes: a mode the store lacks
+        // (tmpfs has no ZERO_RANGE) moves on; a real error (EIO, ENOSPC,
+        // EINVAL) is the answer and must not be retried through a slower path.
+        assert!(fallocate_mode_unsupported(Some(libc::EOPNOTSUPP)));
+        assert!(!fallocate_mode_unsupported(Some(libc::EIO)));
+        assert!(!fallocate_mode_unsupported(Some(libc::ENOSPC)));
+        assert!(!fallocate_mode_unsupported(Some(libc::EINVAL)));
+        assert!(!fallocate_mode_unsupported(None));
+    }
 
     #[test]
     fn ring_off_keeps_direct_regardless_of_dio_alignment() {
