@@ -96,6 +96,18 @@ pub mod oncs {
     pub const WRITE_ZEROES: u16 = 1 << 3;
 }
 
+/// VWC bits (Identify Controller: volatile write cache).
+pub mod vwc {
+    /// A volatile write cache is present. The Linux host keeps
+    /// `BLK_FEAT_WRITE_CACHE | BLK_FEAT_FUA` on the namespace's queue only
+    /// when this bit is set (`nvme_update_disk_info`); with it clear the
+    /// host never issues Flush or FUA writes, so a target whose backend
+    /// can sit on a volatile cache must advertise it. Kernel nvmet sets it
+    /// unconditionally and lets the backend turn Flush into a no-op when
+    /// the device has no cache.
+    pub const PRESENT: u8 = 1 << 0;
+}
+
 /// CTRATT bits (Identify Controller: controller attributes).
 pub mod ctratt {
     /// Traffic Based Keep Alive Support: the controller treats command

@@ -28,8 +28,12 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
   path (`N/io.rs:178`) are dead code in real interop. On a disk with a
   volatile write cache, a host `fsync()` returns with data not durable at
   the target.
-- **Fix shape:** always advertise VWC (as nvmet does) and let the backend
-  decide whether flush is a no-op; verify with a VM `fio --fsync` run.
+- **Fixed (2026-08-26):** Identify Controller sets `vwc::PRESENT` and Get
+  Features `VOLATILE_WC` reports 1 on IO controllers, as nvmet does; the
+  backend decides whether Flush is a no-op. Gates: `tests/write_cache.rs`;
+  the guest fio stage now asserts the host queue is `write back`/`fua=1`
+  and runs fsync + FUA passes (target counters showed Flush on the wire
+  for the first time: `flush 254` on one IO queue).
 
 ### 2. No in-band authentication, no TLS
 
