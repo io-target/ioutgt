@@ -36,6 +36,7 @@ pub mod cns {
 
 /// Feature identifiers.
 pub mod feat {
+    pub const VOLATILE_WC: u8 = 0x06;
     pub const NUM_QUEUES: u8 = 0x07;
     pub const ASYNC_EVENT_CONFIG: u8 = 0x0B;
     pub const KATO: u8 = 0x0F;

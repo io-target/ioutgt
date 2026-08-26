@@ -138,6 +138,13 @@ if [ -n "$FINAL_PID" ] && [ -r "/proc/$FINAL_PID/status" ]; then
         RC=1
     fi
 fi
+# Per-queue counters, informational: the fio stage's --fsync pass shows
+# up as Flush commands when the pool is still alive (idle teardown drops
+# the counters after 30 s without connections; the kill stage restarts the
+# process). FUA writes flush inside the write path and are not counted.
+# The hard VWC gate is the guest-side write_cache/fua sysfs check.
+echo "--- target stats after run ---"
+"$TOP/target/release/ioutgt-nvme-tcp" stat --socket "$CTL_SOCK" 2>&1 || true
 echo "--- target log ---"
 tail -50 "$LOG"
 exit $RC

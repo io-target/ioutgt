@@ -95,11 +95,36 @@ ioutgt_fio_verify() {
         vt_log "kernel without CONFIG_NVME_MULTIPATH; no nvmeXcYnZ path to check"
     fi
 
+    # The host keeps Flush/FUA on the queue only when Identify Controller
+    # advertises VWC (nvme_update_disk_info: BLK_FEAT_WRITE_CACHE|FUA).
+    # "write through" here means every later fsync() on this device is a
+    # no-op on the wire — the end-to-end proof of our VWC advertisement.
+    local bdev wc fua
+    bdev=$(basename "$dev")
+    wc=$(cat "/sys/block/$bdev/queue/write_cache" 2>/dev/null || echo "?")
+    fua=$(cat "/sys/block/$bdev/queue/fua" 2>/dev/null || echo "?")
+    [ "$wc" = "write back" ] && [ "$fua" = "1" ] ||
+        vt_die "host queue write_cache='$wc' fua='$fua' — VWC not honored, Flush/FUA disabled"
+    vt_log "host queue: write_cache=$wc fua=$fua"
+
     fio --name=v4k --filename="$dev" --rw=randwrite --bs=4k --size=16M \
         --verify=crc32c --verify_fatal=1 --direct=1 --ioengine=libaio \
         --iodepth=32 --output-format=terse >/dev/null ||
         vt_die "fio 4k verify failed"
     vt_log "fio 4k randwrite verify ok"
+
+    # Flush on the wire: fsync every 16 writes and FUA writes (sync=1 →
+    # O_SYNC → REQ_FUA on a write-back queue) both reach the target's
+    # flush path now that VWC is advertised.
+    fio --name=vflush --filename="$dev" --rw=randwrite --bs=4k --size=8M \
+        --fsync=16 --verify=crc32c --verify_fatal=1 --direct=1 \
+        --ioengine=libaio --iodepth=8 --output-format=terse >/dev/null ||
+        vt_die "fio fsync verify failed"
+    fio --name=vfua --filename="$dev" --rw=write --bs=4k --size=4M --sync=1 \
+        --verify=crc32c --verify_fatal=1 --direct=1 --ioengine=libaio \
+        --iodepth=8 --output-format=terse >/dev/null ||
+        vt_die "fio FUA verify failed"
+    vt_log "fio fsync + FUA verify ok"
 
     fio --name=v128k --filename="$dev" --rw=write --bs=128k --size=32M \
         --verify=crc32c --verify_fatal=1 --direct=1 --ioengine=libaio \

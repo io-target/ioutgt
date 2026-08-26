@@ -427,6 +427,16 @@ impl Client {
         assert_eq!(cqe.status.get() >> 1, status::SUCCESS, "enable controller");
     }
 
+    /// Get Features for `fid` (no data phase); returns the completion.
+    pub fn get_features(&mut self, fid: u8, cid: u16) -> spec::Cqe {
+        let mut sqe = spec::Sqe::zeroed();
+        sqe.opcode = spec::admin_opcode::GET_FEATURES;
+        sqe.cid.set(cid);
+        sqe.cdw10.set(u32::from(fid));
+        self.send_capsule(&sqe, &[]);
+        self.recv_response()
+    }
+
     /// Post an Async Event Request (no response until an event fires).
     pub fn post_aer(&mut self, cid: u16) {
         let mut sqe = spec::Sqe::zeroed();

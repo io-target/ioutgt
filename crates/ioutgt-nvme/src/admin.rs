@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::fabrics::{self, DiscoveryLogEntry, DiscoveryLogHeader};
 use crate::identify::{
     IdentifyController, IdentifyNamespace, SGLS_BYTE_ALIGNED, SGLS_KEYED, SGLS_SAOS, cmic, ctratt,
-    nmic, oncs,
+    nmic, oncs, vwc,
 };
 use crate::spec::{Sqe, admin_opcode, cns, feat, log_page};
 use crate::status;
@@ -222,6 +222,8 @@ fn build_id_ctrl<B: Backend>(
     } else {
         id.nn.set(subsys.as_ref().map_or(0, |s| s.max_nsid()));
         id.oncs.set(oncs::DSM | oncs::WRITE_ZEROES);
+        // VWC: always advertised, like nvmet (see `identify::vwc`).
+        id.vwc = vwc::PRESENT;
         // IOCCSZ: (64B SQE + in-capsule data) / 16; IORCSZ: one CQE. RDMA
         // advertises one page of in-capsule data (nvmet parity): small write
         // payloads then arrive inside the command capsule and skip the
@@ -273,6 +275,11 @@ fn get_features<B: Backend>(ctx: &Rc<ConnCtx<B>>, admin: &AdminState<B>, sqe: &S
         }
         feat::KATO => Outcome::status(ctx.cqe(admin.kato_ms.get(), cid, status::SUCCESS)),
         feat::ASYNC_EVENT_CONFIG => Outcome::status(ctx.cqe(admin.aec.get(), cid, status::SUCCESS)),
+        // Mirrors Identify Controller VWC (IO controllers only): the cache
+        // is always reported present and enabled, as nvmet does.
+        feat::VOLATILE_WC if !admin.discovery.get() => {
+            Outcome::status(ctx.cqe(1, cid, status::SUCCESS))
+        }
         _ => Outcome::status(ctx.cqe(0, cid, status::INVALID_FIELD | status::DNR)),
     }
 }
