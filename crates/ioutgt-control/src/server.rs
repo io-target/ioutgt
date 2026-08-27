@@ -154,8 +154,10 @@ fn resolve<'a>(
     }
 }
 
-/// Build a backend from its config (block shift 9, as the static path).
-/// `ring_enabled` is the port's recv-ring state: a `FileBackend` only gates
+/// Build a backend from its config. Memory/null stores use 512 B blocks; a
+/// file/bdev store advertises the LBA size probed from the device
+/// (`FileBackend::open`). `ring_enabled` is the port's recv-ring state: a
+/// `FileBackend` only gates
 /// O_DIRECT on `statx` DIO alignment when the ring is on (it may then write
 /// from 4-byte-aligned ring memory); with the ring off it keeps O_DIRECT
 /// whenever the fd opened (writes come from page-aligned pool buffers).
@@ -169,8 +171,7 @@ pub fn build_backend(config: &BackendConfig, ring_enabled: bool) -> Result<AnyBa
             AnyBackend::Null(NullBackend::new(size_mb << 20, BLOCK_SHIFT))
         }
         BackendConfig::File { path } => {
-            let file =
-                FileBackend::open(path, BLOCK_SHIFT, ring_enabled).map_err(|e| e.to_string())?;
+            let file = FileBackend::open(path, ring_enabled).map_err(|e| e.to_string())?;
             if !file.is_direct() {
                 warn!(?path, "O_DIRECT unavailable; using buffered IO");
             }

@@ -469,11 +469,15 @@ owning queue thread's own ring. The file backend issues vectored
 `READV`/`WRITEV` over a command's data segments (one iovec per pool
 segment — contiguous or scattered). It opens a single fd `O_DIRECT`,
 falling back to buffered only when the store refuses direct (e.g. tmpfs);
-the choice is fixed at open and needs no per-store alignment probing,
-because the slot pool's buffers are page-granular and every transfer is a
-block multiple, so once O_DIRECT opens it serves every IO. (Sub-page
-buffers — which would require a `statx STATX_DIOALIGN` check — only arise
-with a zero-copy recv ring, deferred.) `FSYNC` flush; `FALLOCATE`
+the direct/buffered choice is fixed at open. The LBA size is probed at
+the same time — `BLKSSZGET` for a block device (uncapped), the `statx
+STATX_DIOALIGN` offset alignment or, failing that, `st_blksize` for a
+file (capped at 4 KiB), floored at 512 B — so every host IO is a
+multiple of the store's O_DIRECT unit by construction (a 4Kn device
+advertises 4 KiB LBAs); the slot pool's buffers are page-granular, so
+once O_DIRECT opens it serves every IO. (The same `STATX_DIOALIGN` query
+also gates O_DIRECT on memory alignment when the recv ring is on, since
+ring payloads are only 4-byte aligned.) `FSYNC` flush; `FALLOCATE`
 punch-hole/zero-range for discard/write-zeroes on files and for
 write-zeroes on bdevs; `URING_CMD` `BLOCK_URING_CMD_DISCARD` for discard
 on bdevs — all with hint semantics for stores that cannot unmap. IOPOLL

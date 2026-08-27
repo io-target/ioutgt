@@ -117,8 +117,12 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
   `ops::block_discard` (`BLOCK_URING_CMD_DISCARD`) and bdev write-zeroes
   through the fallocate chain (`blkdev_fallocate` → `blkdev_issue_zeroout`);
   both gated by `testing/vmtest/ioutgt_bdev_discard.sh` on a loop device
-  (discard freed 32 of 64 MiB where it freed 0 before). Still open: the
-  512 B LBA size and passthru.
+  (discard freed 32 of 64 MiB where it freed 0 before).
+- **Fixed (2026-08-26):** LBA size is probed — `BLKSSZGET` for bdevs
+  (uncapped), `statx` DIO offset alignment else `st_blksize` for files
+  (4 KiB cap), 512 B floor — nvmet's rule; `ioutgt_bdev_discard.sh --sector-size 4096` asserts the host sees
+  4 KiB LBAs (it saw 512 B before). Still open: passthru; `npwg`/`nows`
+  hints for 512e drives.
 
 ### 7. Namespace data features: reservations, ZNS, PI
 

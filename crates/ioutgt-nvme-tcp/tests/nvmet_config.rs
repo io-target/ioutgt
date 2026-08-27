@@ -7,7 +7,7 @@ mod common;
 
 use common::{Client, HOSTNQN, NQN, backing_file, pattern, rw_sqe};
 use ioutgt_harness::TransportType;
-use ioutgt_nvme::identify::IdentifyController;
+use ioutgt_nvme::identify::{IdentifyController, IdentifyNamespace};
 use ioutgt_nvme::{spec, status};
 use zerocopy::FromBytes;
 
@@ -69,15 +69,23 @@ fn nvmetcli_config_end_to_end() {
     assert_eq!(desc[1], 16, "NIDL");
     assert_eq!(desc[4..20], UUID_BYTES);
 
+    // The LBA size is probed from the backing file's filesystem (512 B on
+    // a 512e disk, 4 KiB on btrfs), so size the IO from Identify Namespace
+    // as a host does rather than assuming 512 B.
+    let ns = admin.identify(spec::cns::NAMESPACE, 1, 5);
+    let ns = IdentifyNamespace::read_from_bytes(&ns).expect("identify namespace");
+    let lbads = ns.lbaf[usize::from(ns.flbas & 0xF)].lbads;
+    let nlb0 = u16::try_from((4096u32 >> lbads) - 1).unwrap();
+
     // IO round-trips through the file-backed namespace.
     let mut io = Client::handshake(addr, false, false);
     io.connect(1, 32, cntlid, 1);
     let data = pattern(4096, 0x5a);
-    let mut sqe = rw_sqe(spec::io_opcode::WRITE, 2, 0, 7, 4096, false);
+    let mut sqe = rw_sqe(spec::io_opcode::WRITE, 2, 0, nlb0, 4096, false);
     sqe.nsid.set(1);
     io.send_capsule(&sqe, &data);
     assert_eq!(io.recv_response().status.get() >> 1, status::SUCCESS);
-    let mut sqe = rw_sqe(spec::io_opcode::READ, 3, 0, 7, 4096, true);
+    let mut sqe = rw_sqe(spec::io_opcode::READ, 3, 0, nlb0, 4096, true);
     sqe.nsid.set(1);
     io.send_capsule(&sqe, &[]);
     let (_, payload) = io.recv_pdu();
