@@ -38,11 +38,6 @@ use ioutgt_core::pool::{MAX_SEGS, Seg};
 use ioutgt_core::{Backend, BackendError, LbaRange};
 use ioutgt_uring::ops;
 
-/// `errno` from the most recent failed libc call.
-fn errno() -> i32 {
-    io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
-
 /// Backing kind, decided by `fstat` at open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -92,6 +87,23 @@ fn query_dioalign(fd: RawFd) -> (u32, u32) {
         return (0, 0);
     }
     (stx.stx_dio_mem_align, stx.stx_dio_offset_align)
+}
+
+/// LBA size (as a shift) for a store whose IO unit is `align` bytes
+/// (0 = unreported): the smallest power of two ≥ `align`, floored at 512 B.
+/// A block device's logical sector is taken as is (nvmet:
+/// `blksize_bits(bdev_logical_block_size())`, uncapped — LBS drives have
+/// 8–64 KiB sectors); a file's alignment is capped at 4 KiB (nvmet:
+/// `min(i_blkbits, 12)`).
+fn block_shift_for(kind: Kind, align: u32) -> u8 {
+    let shift = align.max(512).next_power_of_two().trailing_zeros();
+    let shift = match kind {
+        Kind::Block => shift,
+        Kind::Regular => shift.min(12),
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let shift = shift as u8;
+    shift
 }
 
 /// Deallocate is a hint, so two outcomes count as "honoured by doing
@@ -160,46 +172,36 @@ fn advance_iovecs(iovs: &mut [libc::iovec], idx: &mut usize, mut n: usize) {
 }
 
 impl FileBackend {
-    /// Open `path` (regular file or block device). Tries `O_DIRECT`, keeping it
-    /// or falling back to a buffered (`RWF_DONTCACHE`) fd per the ring-gated
-    /// rule in the module docs.
-    pub fn open(path: &Path, block_shift: u8, ring_enabled: bool) -> io::Result<FileBackend> {
+    /// Open `path` (regular file or block device), probing the LBA size from
+    /// the store — a block device's logical sector (`BLKSSZGET`, uncapped),
+    /// a file's `statx STATX_DIOALIGN` offset alignment or, where the
+    /// filesystem does not report one (btrfs), its `st_blksize`, capped at
+    /// 4 KiB — floored at 512 B; see [`block_shift_for`]. Tries `O_DIRECT`,
+    /// keeping it or falling back to a buffered (`RWF_DONTCACHE`) fd per the
+    /// ring-gated rule in the module docs.
+    pub fn open(path: &Path, ring_enabled: bool) -> io::Result<FileBackend> {
         use std::os::unix::ffi::OsStrExt;
         let cpath = std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))?;
-
-        // Try O_DIRECT; keep it only if direct_usable() (see module docs), else
-        // close and reopen buffered.
-        // SAFETY: valid NUL-terminated path; flags are plain constants.
-        let dfd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR | libc::O_DIRECT) };
-        let (fd, direct) = if dfd >= 0 {
-            // SAFETY: fresh fd, exclusively owned.
-            let dfd = unsafe { OwnedFd::from_raw_fd(dfd) };
-            let (dio_mem, dio_off) = query_dioalign(dfd.as_raw_fd());
-            let usable = direct_usable(ring_enabled, dio_mem, dio_off, block_shift);
-            if usable {
-                (dfd, true)
-            } else {
-                drop(dfd);
-                // SAFETY: valid NUL-terminated path; flags are plain constants.
-                let bfd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
-                if bfd < 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                // SAFETY: fresh fd, exclusively owned.
-                (unsafe { OwnedFd::from_raw_fd(bfd) }, false)
-            }
-        } else if matches!(errno(), libc::EINVAL | libc::EOPNOTSUPP) {
-            // Store refuses O_DIRECT outright (e.g. tmpfs): buffered fd.
+        let open_flags = |flags: libc::c_int| -> io::Result<OwnedFd> {
             // SAFETY: valid NUL-terminated path; flags are plain constants.
-            let bfd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
-            if bfd < 0 {
+            let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR | flags) };
+            if fd < 0 {
                 return Err(io::Error::last_os_error());
             }
             // SAFETY: fresh fd, exclusively owned.
-            (unsafe { OwnedFd::from_raw_fd(bfd) }, false)
-        } else {
-            return Err(io::Error::last_os_error());
+            Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        };
+
+        // Try O_DIRECT first; a store that refuses it outright (e.g. tmpfs)
+        // gets a buffered fd. Whether a *granted* O_DIRECT fd is kept is
+        // decided below, once the store's alignment is known.
+        let (fd, mut direct) = match open_flags(libc::O_DIRECT) {
+            Ok(fd) => (fd, true),
+            Err(e) if matches!(e.raw_os_error(), Some(libc::EINVAL | libc::EOPNOTSUPP)) => {
+                (open_flags(0)?, false)
+            }
+            Err(e) => return Err(e),
         };
 
         // SAFETY: stat is written by the kernel on success.
@@ -208,7 +210,8 @@ impl FileBackend {
         if unsafe { libc::fstat(fd.as_raw_fd(), &raw mut stat) } < 0 {
             return Err(io::Error::last_os_error());
         }
-        let (kind, size_bytes) = if stat.st_mode & libc::S_IFMT == libc::S_IFBLK {
+        let (dio_mem, dio_off) = query_dioalign(fd.as_raw_fd());
+        let (kind, size_bytes, align) = if stat.st_mode & libc::S_IFMT == libc::S_IFBLK {
             let mut size: u64 = 0;
             // BLKGETSIZE64 = _IOR(0x12, 114, size_t)
             const BLKGETSIZE64: libc::c_ulong = 0x8008_1272;
@@ -216,15 +219,43 @@ impl FileBackend {
             if unsafe { libc::ioctl(fd.as_raw_fd(), BLKGETSIZE64, &raw mut size) } < 0 {
                 return Err(io::Error::last_os_error());
             }
-            (Kind::Block, size)
+            // BLKSSZGET = _IO(0x12, 104): logical sector size, the unit every
+            // O_DIRECT/discard/zeroout range on the device must respect.
+            const BLKSSZGET: libc::c_ulong = 0x1268;
+            let mut lbs: libc::c_int = 0;
+            // SAFETY: valid fd; the ioctl writes an int.
+            if unsafe { libc::ioctl(fd.as_raw_fd(), BLKSSZGET, &raw mut lbs) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            (Kind::Block, size, u32::try_from(lbs).unwrap_or(0))
         } else if stat.st_mode & libc::S_IFMT == libc::S_IFREG {
+            // The DIO offset alignment is the O_DIRECT unit; a filesystem
+            // that does not report it (btrfs) still refuses sub-block
+            // direct IO, so its block size (nvmet's i_blkbits) stands in.
             #[allow(clippy::cast_sign_loss)]
-            (Kind::Regular, stat.st_size.max(0) as u64)
+            let align = if dio_off != 0 {
+                dio_off
+            } else {
+                u32::try_from(stat.st_blksize.max(0)).unwrap_or(0)
+            };
+            #[allow(clippy::cast_sign_loss)]
+            (Kind::Regular, stat.st_size.max(0) as u64, align)
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "not a file or block device",
             ));
+        };
+        let block_shift = block_shift_for(kind, align);
+
+        // Keep O_DIRECT only if direct_usable() (see module docs); else
+        // reopen buffered.
+        let fd = if direct && !direct_usable(ring_enabled, dio_mem, dio_off, block_shift) {
+            drop(fd);
+            direct = false;
+            open_flags(0)?
+        } else {
+            fd
         };
 
         let nr_blocks = size_bytes >> block_shift;
@@ -481,7 +512,32 @@ impl Backend for FileBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{direct_usable, fallocate_mode_unsupported, unmap_hint_declined};
+    use super::{block_shift_for, direct_usable, fallocate_mode_unsupported, unmap_hint_declined};
+
+    #[test]
+    fn block_shift_follows_the_store_alignment() {
+        // The advertised LBA must be a multiple of the store's IO unit: a
+        // block device's logical sector, uncapped (nvmet: blksize_bits of
+        // bdev_logical_block_size); a file's alignment capped at 4 KiB
+        // (nvmet: min(i_blkbits, 12)). Floored at 512 B for both.
+        use super::Kind::{Block, Regular};
+        assert_eq!(block_shift_for(Regular, 0), 9, "unreported -> 512");
+        assert_eq!(block_shift_for(Regular, 1), 9, "byte-aligned store -> 512");
+        assert_eq!(block_shift_for(Regular, 256), 9, "sub-sector -> 512");
+        assert_eq!(block_shift_for(Regular, 512), 9);
+        assert_eq!(block_shift_for(Regular, 1024), 10);
+        assert_eq!(block_shift_for(Regular, 4096), 12, "4K fs block");
+        assert_eq!(block_shift_for(Regular, 8192), 12, "files capped at 4K");
+        assert_eq!(
+            block_shift_for(Regular, 3072),
+            12,
+            "non-power-of-two rounds up"
+        );
+        assert_eq!(block_shift_for(Block, 512), 9, "512e bdev");
+        assert_eq!(block_shift_for(Block, 4096), 12, "4Kn bdev");
+        assert_eq!(block_shift_for(Block, 8192), 13, "LBS bdev: not capped");
+        assert_eq!(block_shift_for(Block, 65536), 16, "BLK_MAX_BLOCK_SIZE bdev");
+    }
 
     #[test]
     fn unmap_errors_are_classified_like_nvmet() {

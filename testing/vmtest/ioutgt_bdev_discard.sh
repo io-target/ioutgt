@@ -17,7 +17,21 @@
 # bug this test pins, so both effects are asserted, not just exit status.
 #
 #   testing/run_vmtest.sh testing/vmtest/ioutgt_bdev_discard.sh
+#   testing/run_vmtest.sh testing/vmtest/ioutgt_bdev_discard.sh --sector-size 4096
+#
+# --sector-size N formats the loop device with an N-byte logical sector (a
+# 4Kn drive stand-in) and additionally asserts the host sees an N-byte LBA:
+# the target must probe the store's block size rather than assume 512, or
+# every sub-4K O_DIRECT IO the host is entitled to issue fails with EINVAL.
 set -eu
+
+SECTOR=512
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --sector-size) SECTOR="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
 
 . "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
 vt_load_config
@@ -48,9 +62,9 @@ MB=$((1024 * 1024))
 # that reaches it is observable as freed blocks.
 rm -f "$IMG" "$PAT"
 truncate -s "${SIZE_MB}M" "$IMG"
-LOOP=$(losetup -f --show "$IMG") || vt_die "losetup failed"
+LOOP=$(losetup -f --show --sector-size "$SECTOR" "$IMG") || vt_die "losetup failed"
 vt_atexit "losetup -d $LOOP 2>/dev/null || true; rm -f $IMG $PAT"
-vt_log "loop device: $LOOP over $IMG ($(df -T "$IMG" | awk 'NR==2{print $2}'))"
+vt_log "loop device: $LOOP over $IMG ($(df -T "$IMG" | awk 'NR==2{print $2}')), sector $SECTOR"
 lname=$(basename "$LOOP")
 dmax=$(cat "/sys/block/$lname/queue/discard_max_bytes" 2>/dev/null || echo 0)
 [ "$dmax" -gt 0 ] || vt_skip "$LOOP does not support discard (discard_max_bytes=$dmax)"
@@ -104,6 +118,13 @@ for _ in $(seq 100); do
 done
 [ -n "$NS" ] || { dmesg | tail -20; vt_die "namespace device missing"; }
 vt_log "namespace: $NS"
+
+# Geometry: the LBA the host was told must be the loop device's logical
+# sector. A 512 B LBA over a 4096 B sector is the pre-probe bug.
+lbs=$(cat "/sys/block/$(basename "$NS")/queue/logical_block_size")
+[ "$lbs" = "$SECTOR" ] ||
+    vt_die "host sees ${lbs}B LBAs over a ${SECTOR}B-sector device — block size not probed"
+vt_log "host logical block size: $lbs"
 
 # Fill the whole device with a saved random pattern so both "still intact"
 # and "now zero" are checkable byte-for-byte.

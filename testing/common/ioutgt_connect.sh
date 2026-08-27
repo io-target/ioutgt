@@ -140,9 +140,15 @@ ioutgt_fio_verify() {
     vt_log "fio 70/30 randrw verify ok"
 
     # Mixed block sizes spanning both write paths (512B..16K in-capsule,
-    # >16K via R2T) with per-block crc32c verification.
+    # >16K via R2T) with per-block crc32c verification. The 512 B slice
+    # exists only where the LBA is 512 B: the target probes its LBA size
+    # from the backing store (a file on a 4K-block filesystem, or a 4Kn
+    # device, advertises 4 KiB), and the host rejects sub-LBA direct IO.
+    local split="512/10:4k/40:16k/20:64k/20:128k/10"
+    [ "$(cat "/sys/block/$bdev/queue/logical_block_size")" -gt 512 ] &&
+        split="4k/50:16k/20:64k/20:128k/10"
     fio --name=vbs --filename="$dev" --rw=randwrite \
-        --bssplit=512/10:4k/40:16k/20:64k/20:128k/10 --size=24M \
+        --bssplit="$split" --size=24M \
         --verify=crc32c --verify_fatal=1 --direct=1 --ioengine=libaio \
         --iodepth=16 --output-format=terse >/dev/null ||
         vt_die "fio mixed-blocksize verify failed"

@@ -226,11 +226,20 @@ and parallelize; ioutgt issues one ring op per command region
 (resuming short transfers). nvmet's FUA maps to REQ_FUA; ioutgt
 flushes after the write — correct but one round trip more expensive.
 
-**Risks.** No metadata/PI, no zoned support, and the LBA size is
-fixed at 512 B rather than probed from the device (a 4Kn bdev fails
-O_DIRECT on sub-4K-aligned host IO). The bdev path — including discard
-and write-zeroes reaching the store — is gated in the VM on a loop
-device (`testing/vmtest/ioutgt_bdev_discard.sh`, root in the guest).
+**LBA size.** Both probe it from the store rather than assume it.
+Block devices: the logical sector, uncapped on both sides
+(`bdev_logical_block_size()` / `BLKSSZGET` — LBS drives have 8–64 KiB
+sectors). Files: nvmet takes the inode's `i_blkbits`; ioutgt takes the
+`statx STATX_DIOALIGN` offset alignment — the actual O_DIRECT
+constraint, so a file on a 512e disk stays 512 B where nvmet would
+advertise the filesystem's 4 KiB block — and falls back to `st_blksize`
+where the filesystem reports none (btrfs); both cap files at 4 KiB.
+Floored at 512 B; memory/null stores use 512 B.
+
+**Risks.** No metadata/PI, no zoned support. The bdev path — LBA-size
+probing, discard and write-zeroes reaching the store — is gated in the
+VM on a loop device at both 512 B and 4096 B sectors
+(`testing/vmtest/ioutgt_bdev_discard.sh`, root in the guest).
 
 ## 6. Threading and synchronization
 

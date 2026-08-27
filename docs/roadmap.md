@@ -139,7 +139,13 @@ six obligations of the transport contract (setup → install → recv path
   `testing/vmtest/ioutgt_bdev_discard.sh` (root-in-guest loop device:
   allocated blocks drop, zeroed range reads back zero). NVMe
   passthrough backend over uring-cmd to a host controller.
-- bdev LBA size from the device (`BLKSSZGET`) instead of the fixed 512 B.
+- ~~bdev LBA size from the device instead of the fixed 512 B~~ — **done**
+  (2026-08-26): `FileBackend::open` probes `BLKSSZGET` (bdev, uncapped) /
+  `statx` DIO offset alignment else `st_blksize` (file, capped 4 KiB),
+  floored 512 B; the loop-device
+  guest test runs at `--sector-size 4096` and asserts the host sees 4 KiB
+  LBAs. Still open: `npwg`/`nows` from the physical block size for 512e
+  drives (perf hint, not correctness).
 - Metadata/PI formats, Write Protect, reservations — driven by
   demand.
 
