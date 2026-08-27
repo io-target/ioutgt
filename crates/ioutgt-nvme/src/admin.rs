@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::fabrics::{self, DiscoveryLogEntry, DiscoveryLogHeader};
 use crate::identify::{
     IdentifyController, IdentifyNamespace, SGLS_BYTE_ALIGNED, SGLS_KEYED, SGLS_SAOS, cmic, ctratt,
-    nmic, oncs, vwc,
+    nmic, nsfeat, oncs, vwc,
 };
 use crate::spec::{Sqe, admin_opcode, cns, feat, log_page};
 use crate::status;
@@ -15,7 +15,7 @@ use tracing::debug;
 use zerocopy::IntoBytes;
 
 use crate::dispatch::{AdminState, ConnCtx, Outcome};
-use ioutgt_core::backend::Backend;
+use ioutgt_core::backend::{Backend, Topology};
 use ioutgt_core::subsystem::TransportType;
 
 /// KAS granularity: 10 seconds in 100ms units, as nvmet.
@@ -246,6 +246,46 @@ fn nul_terminate(dst: &mut [u8; 256], s: &str) {
     dst[..n].copy_from_slice(&s.as_bytes()[..n]);
 }
 
+/// The Identify Namespace topology hints derived from a store's
+/// [`Topology`], as `nvmet_bdev_set_limits` computes them: each is the
+/// unit expressed in logical blocks, 0-based.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct NsLimits {
+    nsfeat: u8,
+    /// NAWUN = NAWUPF = NACWU: logical blocks per physical block.
+    nawun: u16,
+    /// NPWG = NPWA: preferred write granularity (`io_min`).
+    npwg: u16,
+    /// NPDG = NPDA: preferred deallocate granularity.
+    npdg: u16,
+    /// NOWS: optimal write size (`io_opt`).
+    nows: u16,
+}
+
+fn ns_limits(topo: Topology, block_shift: u8) -> NsLimits {
+    if topo == Topology::default() {
+        // No topology (files, memory): advertise nothing, like nvmet's file
+        // backend.
+        return NsLimits::default();
+    }
+    // Bytes -> logical blocks, 0-based, clamped to one block..2^16 blocks
+    // (nvmet's to0based).
+    let lbs = 1u64 << block_shift;
+    let to0based = |bytes: u32| -> u16 {
+        let blocks = (u64::from(bytes) / lbs).clamp(1, 0x1_0000);
+        #[allow(clippy::cast_possible_truncation)]
+        let v = (blocks - 1) as u16;
+        v
+    };
+    NsLimits {
+        nsfeat: nsfeat::ATOMICS | nsfeat::OPTPERF,
+        nawun: to0based(topo.physical_block),
+        npwg: to0based(topo.io_min),
+        npdg: to0based(topo.discard_granularity),
+        nows: to0based(topo.io_opt),
+    }
+}
+
 fn build_id_ns<B: Backend>(backend: &B) -> Box<IdentifyNamespace> {
     let mut id = Box::new(IdentifyNamespace::zeroed());
     let blocks = backend.nr_blocks();
@@ -262,6 +302,18 @@ fn build_id_ns<B: Backend>(backend: &B) -> Box<IdentifyNamespace> {
     id.lbaf[0].lbads = backend.block_shift();
     id.lbaf[0].ms.set(0);
     id.anagrpid.set(0);
+    // Block devices: forward the IO topology beneath the LBA so a 512e
+    // drive's 4 KiB physical block reaches the host's queue limits.
+    let limits = ns_limits(backend.topology(), backend.block_shift());
+    id.nsfeat = limits.nsfeat;
+    id.nawun.set(limits.nawun);
+    id.nawupf.set(limits.nawun);
+    id.nacwu.set(limits.nawun);
+    id.npwg.set(limits.npwg);
+    id.npwa.set(limits.npwg);
+    id.npdg.set(limits.npdg);
+    id.npda.set(limits.npdg);
+    id.nows.set(limits.nows);
     id
 }
 
@@ -406,4 +458,61 @@ fn build_discovery_log<B: Backend>(ctx: &Rc<ConnCtx<B>>) -> Vec<u8> {
         log.extend_from_slice(entry.as_bytes());
     }
     log
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ns_limits;
+    use crate::identify::nsfeat;
+    use ioutgt_core::backend::Topology;
+
+    #[test]
+    fn ns_limits_follow_the_device_topology() {
+        // 512e disk: 512 B LBAs in 4 KiB physical blocks, 4 KiB discard
+        // granularity, 512 KiB optimal transfer — nvmet_bdev_set_limits'
+        // 0-based logical-blocks-per-unit fields.
+        let topo = Topology {
+            physical_block: 4096,
+            io_min: 4096,
+            io_opt: 512 * 1024,
+            discard_granularity: 4096,
+        };
+        let l = ns_limits(topo, 9);
+        assert_eq!(l.nsfeat, nsfeat::ATOMICS | nsfeat::OPTPERF);
+        assert_eq!(l.nawun, 7, "atomic unit: 8 LBAs per physical block");
+        assert_eq!(l.npwg, 7, "preferred write granularity: io_min");
+        assert_eq!(l.npdg, 7, "preferred deallocate granularity");
+        assert_eq!(l.nows, 1023, "optimal write size");
+
+        // The same disk with 4 KiB LBAs: everything collapses to one LBA.
+        let l = ns_limits(topo, 12);
+        assert_eq!((l.nawun, l.npwg, l.npdg, l.nows), (0, 0, 0, 127));
+
+        // A store with no topology (files, memory) advertises none of it,
+        // as nvmet's file backend does.
+        let l = ns_limits(Topology::default(), 9);
+        assert_eq!(l.nsfeat, 0);
+        assert_eq!((l.nawun, l.npwg, l.npdg, l.nows), (0, 0, 0, 0));
+
+        // Unknown optional members stay 0 (= one LBA); a unit smaller than
+        // the LBA cannot go below one LBA either.
+        let l = ns_limits(
+            Topology {
+                physical_block: 4096,
+                ..Topology::default()
+            },
+            9,
+        );
+        assert_eq!(l.nsfeat, nsfeat::ATOMICS | nsfeat::OPTPERF);
+        assert_eq!((l.nawun, l.npwg, l.npdg, l.nows), (7, 0, 0, 0));
+        let l = ns_limits(
+            Topology {
+                physical_block: 512,
+                io_min: 512,
+                ..Topology::default()
+            },
+            12,
+        );
+        assert_eq!((l.nawun, l.npwg), (0, 0));
+    }
 }

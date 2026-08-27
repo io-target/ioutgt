@@ -43,19 +43,14 @@ vt_require_cmd nvme
 vt_require_cmd blkdiscard
 vt_require_cmd losetup
 
-top="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
-[ -n "$top" ] && [ -d "$top/testing/vmtest" ] ||
-    top=$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_top" 2>/dev/null || true)
-[ -n "$top" ] || vt_die "no ioutgt checkout (missing ioutgt_top marker)"
-BIN="$top/target/release/ioutgt-nvme-tcp"
-[ -x "$BIN" ] || vt_die "no ioutgt binary at $BIN (build on the host first)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/../common/ioutgt_guest.sh"
 
 PORT=14421
 NQN="nqn.2026-06.io.ioutgt:bdev"
 SIZE_MB=64
 IMG=/tmp/ioutgt-bdev.img
 PAT=/tmp/ioutgt-bdev.pat
-LOG=/tmp/ioutgt-bdev.log
 MB=$((1024 * 1024))
 
 # Sparse backing file on a filesystem that can punch holes, so a discard
@@ -71,52 +66,9 @@ dmax=$(cat "/sys/block/$lname/queue/discard_max_bytes" 2>/dev/null || echo 0)
 
 alloc_bytes() { echo $(( $(stat -c %b "$IMG") * $(stat -c %B "$IMG") )); }
 
-RUST_LOG=info "$BIN" --listen "127.0.0.1:$PORT" --io-threads 1 --subsys-nqn "$NQN" \
-    --backend "$LOOP" --control-socket /tmp/ioutgt-bdev.sock >"$LOG" 2>&1 &
-TPID=$!
-vt_atexit "kill $TPID 2>/dev/null || true; sed 's/\x1b\[[0-9;]*m//g' $LOG | tail -20 >&2"
-for _ in $(seq 100); do
-    grep -q "listening" "$LOG" && break
-    kill -0 "$TPID" 2>/dev/null || { cat "$LOG"; vt_die "target died"; }
-    sleep 0.1
-done
-grep -q "listening" "$LOG" || vt_die "target never listened"
-
-# The namespace of OUR subsystem, found through sysfs by NQN. Not a
-# before/after diff of /dev/nvme*n*: a controller left over from an aborted
-# earlier run would hide the device, and any other namespace appearing in
-# the window (the guest's QEMU PCI NVMe rescanning) would be picked — and
-# then overwritten by the pattern fill below.
-ns_for_nqn() {
-    local s c n
-    for s in /sys/class/nvme-subsystem/*; do
-        [ "$(cat "$s/subsysnqn" 2>/dev/null)" = "$NQN" ] || continue
-        # Native multipath: the head node sits in the subsystem dir; without
-        # it, the namespace hangs off the controller dir.
-        for n in "$s"/nvme*n* "$s"/nvme*/nvme*n*; do
-            n=$(basename "$n")
-            [[ "$n" =~ ^nvme[0-9]+n[0-9]+$ ]] && [ -b "/dev/$n" ] && { echo "/dev/$n"; return 0; }
-        done
-    done
-    for c in /sys/class/nvme/*; do
-        [ "$(cat "$c/subsysnqn" 2>/dev/null)" = "$NQN" ] || continue
-        for n in "$c"/nvme*n*; do
-            n=$(basename "$n")
-            [[ "$n" =~ ^nvme[0-9]+n[0-9]+$ ]] && [ -b "/dev/$n" ] && { echo "/dev/$n"; return 0; }
-        done
-    done
-    return 1
-}
-
-nvme connect -t tcp -a 127.0.0.1 -s "$PORT" -n "$NQN" --nr-io-queues=1 ||
-    vt_die "nvme connect failed"
-vt_atexit "nvme disconnect -n $NQN >/dev/null 2>&1 || true"
-NS=""
-for _ in $(seq 100); do
-    NS=$(ns_for_nqn) && break
-    sleep 0.2
-done
-[ -n "$NS" ] || { dmesg | tail -20; vt_die "namespace device missing"; }
+ioutgt_guest_start "$LOOP" "$NQN" "$PORT"
+ioutgt_guest_connect "$NQN" "$PORT"
+NS=$(ioutgt_guest_wait_ns "$NQN")
 vt_log "namespace: $NS"
 
 # Geometry: the LBA the host was told must be the loop device's logical

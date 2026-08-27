@@ -121,8 +121,13 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
 - **Fixed (2026-08-26):** LBA size is probed — `BLKSSZGET` for bdevs
   (uncapped), `statx` DIO offset alignment else `st_blksize` for files
   (4 KiB cap), 512 B floor — nvmet's rule; `ioutgt_bdev_discard.sh --sector-size 4096` asserts the host sees
-  4 KiB LBAs (it saw 512 B before). Still open: passthru; `npwg`/`nows`
-  hints for 512e drives.
+  4 KiB LBAs (it saw 512 B before).
+- **Fixed (2026-08-27):** `nvmet_bdev_set_limits` parity — `Backend::topology`
+  forwards physical block / `io_min` / `io_opt` / discard granularity as
+  NSFEAT+NAWUN/NPWG/NPDG/NOWS; `ioutgt_bdev_topology.sh` (scsi_debug 512e)
+  asserts the host's `physical_block_size`/`minimum_io_size`/
+  `optimal_io_size`/`discard_granularity` equal the backing disk's. Still
+  open: passthru.
 
 ### 7. Namespace data features: reservations, ZNS, PI
 

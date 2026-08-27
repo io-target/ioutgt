@@ -31,6 +31,26 @@ pub enum BackendError {
     Io(i32),
 }
 
+/// A store's IO topology beneath the logical block, in bytes (0 = unknown
+/// / not applicable). Identify Namespace forwards it to the host as the
+/// atomic and optimal-performance hints (NAWUN/NAWUPF, NPWG/NPWA,
+/// NPDG/NPDA, NOWS) the way `nvmet_bdev_set_limits` does, so a 512e drive's
+/// 4 KiB physical block reaches the host's `physical_block_size`/`io_min`
+/// instead of the host assuming physical == logical. Only block devices
+/// report one; files and memory leave it default, as nvmet's file backend
+/// leaves the fields zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Topology {
+    /// Physical block size (`BLKPBSZGET`).
+    pub physical_block: u32,
+    /// Minimum IO the device serves without read-modify-write (`BLKIOMIN`).
+    pub io_min: u32,
+    /// Optimal IO size (`BLKIOOPT`).
+    pub io_opt: u32,
+    /// Discard granularity (`queue/discard_granularity`).
+    pub discard_granularity: u32,
+}
+
 /// Block storage provider for one namespace.
 ///
 /// All methods take `&self`: backends are shared by every queue thread's
@@ -43,6 +63,11 @@ pub trait Backend: Send + Sync + 'static {
 
     /// Device capacity in logical blocks.
     fn nr_blocks(&self) -> u64;
+
+    /// IO topology beneath the logical block, if the store has one.
+    fn topology(&self) -> Topology {
+        Topology::default()
+    }
 
     /// Read `buf.len()` bytes starting at logical block `slba`.
     fn read(&self, slba: u64, buf: &mut [u8]) -> impl Future<Output = Result<(), BackendError>>;
