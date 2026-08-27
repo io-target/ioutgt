@@ -10,11 +10,28 @@ about *what is missing*, ranked by importance.
 Path shorthand: N = `crates/ioutgt-nvme/src`, T = `crates/ioutgt-nvme-tcp/src`,
 R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
 
+**Status after the fix series** (PR #10, branch `nvmet-gap-fixes`,
+2026-08-26/27). The analysis below describes `dc42918`; Appendix B is that
+snapshot, annotated where a line has since changed. The series closes gap
+#1 and all of gap #6 except passthru:
+
+| commit | closes |
+|---|---|
+| `91f84c8` nvme: advertise a volatile write cache so the host sends Flush/FUA | #1 |
+| `069980e` backend: make DSM discard and Write Zeroes reach block devices | #6 discard / write-zeroes |
+| `8403a85` backend: probe the LBA size from the store instead of assuming 512 B | #6 512 B LBA |
+| `e03bf0c` backend, nvme: forward a block device's IO topology in Identify Namespace | #6 `nvmet_bdev_set_limits` parity |
+| `c13ab8a` docs: correct two stale nvmet-comparison claims | §3 |
+
+Each fix was reviewed (four finder passes) with the confirmed findings
+folded into the commit they belong to. Gaps #2–#5, #7, #8 and passthru
+are untouched and keep their ranking.
+
 ---
 
 ## 1. Top 8 gaps, in importance order
 
-### 1. VWC not advertised → host never sends Flush/FUA (durability bug)
+### 1. VWC not advertised → host never sends Flush/FUA (durability bug) — fixed
 
 - **nvmet:** `id->vwc = NVME_CTRL_VWC_PRESENT` unconditionally
   (`K/admin-cmd.c:735`); Get Features `VOLATILE_WC` returns 1; the bdev
@@ -28,7 +45,7 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
   path (`N/io.rs:178`) are dead code in real interop. On a disk with a
   volatile write cache, a host `fsync()` returns with data not durable at
   the target.
-- **Fixed (2026-08-26):** Identify Controller sets `vwc::PRESENT` and Get
+- **Fixed (`91f84c8`, 2026-08-26):** Identify Controller sets `vwc::PRESENT` and Get
   Features `VOLATILE_WC` reports 1 on IO controllers, as nvmet does; the
   backend decides whether Flush is a no-op. Gates: `tests/write_cache.rs`;
   the guest fio stage now asserts the host queue is `write back`/`fua=1`
@@ -96,10 +113,14 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
   `ERROR/SMART/FW_SLOT`; no `CMD_EFFECTS`, LPO only on discovery.
 - **Identity:** `MN` hard-coded `"ioutgt"` — the nvmetcli `model` attr is
   parsed but unused (`N/admin.rs:159`); IEEE OUI, VID, SSVID zero;
-  nguid/eui64 zero.
+  nguid/eui64 zero. `VER` is 1.3.0 where nvmet reports 2.1.0
+  (`NVMET_DEFAULT_VS`); the Identify NS topology hints added in `e03bf0c`
+  (NPWG/NPDG/NOWS, NSFEAT OPTPERF) are NVMe 1.4 fields, which a Linux host
+  honours regardless of VER but a strict host may ignore — bumping VER
+  (and reviewing what else it implies) is a follow-up.
 - **Why it matters:** `nvme-cli` tooling and monitoring parity more than IO.
 
-### 6. bdev backend fidelity: 512 B hard-coded, no-op discard, no passthru
+### 6. bdev backend fidelity: 512 B hard-coded, no-op discard, no passthru — fixed except passthru
 
 - **nvmet:** `blksize_shift` from `bdev_logical_block_size()` (cap 4 KiB);
   `nvmet_bdev_set_limits` (nawun/nawupf/npwg/npwa/npdg/npda/nows,
@@ -113,21 +134,25 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
   space is reclaimed; no passthru.
 - **Effect:** on a 4Kn device the O_DIRECT path gets `EINVAL` on any
   512-aligned-but-not-4K-aligned host IO.
-- **Partly fixed (2026-08-26):** bdev discard now goes through
+- **Fixed (`069980e`, 2026-08-26):** bdev discard now goes through
   `ops::block_discard` (`BLOCK_URING_CMD_DISCARD`) and bdev write-zeroes
   through the fallocate chain (`blkdev_fallocate` → `blkdev_issue_zeroout`);
   both gated by `testing/vmtest/ioutgt_bdev_discard.sh` on a loop device
-  (discard freed 32 of 64 MiB where it freed 0 before).
-- **Fixed (2026-08-26):** LBA size is probed — `BLKSSZGET` for bdevs
+  (discard freed 32 of 64 MiB where it freed 0 before). Deallocate stays a
+  hint only for `EOPNOTSUPP`/`EBUSY`; `EINVAL` (misaligned range) surfaces;
+  only `EOPNOTSUPP` advances the write-zeroes chain.
+- **Fixed (`8403a85`, 2026-08-26):** LBA size is probed — `BLKSSZGET` for bdevs
   (uncapped), `statx` DIO offset alignment else `st_blksize` for files
   (4 KiB cap), 512 B floor — nvmet's rule; `ioutgt_bdev_discard.sh --sector-size 4096` asserts the host sees
   4 KiB LBAs (it saw 512 B before).
-- **Fixed (2026-08-27):** `nvmet_bdev_set_limits` parity — `Backend::topology`
+- **Fixed (`e03bf0c`, 2026-08-27):** `nvmet_bdev_set_limits` parity — `Backend::topology`
   forwards physical block / `io_min` / `io_opt` / discard granularity as
   NSFEAT+NAWUN/NPWG/NPDG/NOWS; `ioutgt_bdev_topology.sh` (scsi_debug 512e)
   asserts the host's `physical_block_size`/`minimum_io_size`/
-  `optimal_io_size`/`discard_granularity` equal the backing disk's. Still
-  open: passthru.
+  `optimal_io_size`/`discard_granularity` equal the backing disk's.
+- **Still open:** passthru (see the discussion in `docs/roadmap.md`: skip
+  nvmet-style controller passthru; a `/dev/ng` uring_cmd IO backend is the
+  interesting slice).
 
 ### 7. Namespace data features: reservations, ZNS, PI
 
@@ -674,19 +699,24 @@ Source: worktree `ioutgt-buffer` @ `dc42918`.
 - Match `N/io.rs:65-95`: FLUSH, READ, WRITE, WRITE_ZEROES, DSM; else
   INVALID_OPCODE. Compare / Write Uncorrectable / Verify / Copy / zone /
   reservations: not found.
-- ONCS = DSM|WRITE_ZEROES = 0x0C (`admin.rs:224`). FUSES/VWC/FNA/AWUN=0.
+- ONCS = DSM|WRITE_ZEROES = 0x0C (`admin.rs:224`). FUSES/VWC/FNA/AWUN=0
+  *(VWC=PRESENT and Get Features VOLATILE_WC=1 since `91f84c8`)*.
 - DSM (`io.rs:189-224`): AD only; IDR/IDW no-op.
 - FUA (`io.rs:178-182`): write then flush(). Read FUA/LR/PRINFO ignored.
 - MDTS 128 KiB check + SGL len must equal NLB*bs (`io.rs:100-118`).
 - Metadata/PI: none (ms=0, mc/dpc/dps 0, `admin.rs:247-264`). nlbaf=0,
   single LBAF, block shift hard-coded 9 (512 B) for all backends
-  (`control/server.rs:163`).
+  (`control/server.rs:163`) *(probed from the store since `8403a85`:
+  `BLKSSZGET` uncapped for bdevs, `statx` DIO alignment else `st_blksize`
+  capped 4 KiB for files; memory/null stay 512 B)*.
 
 ### B.4 Identity
 
 - ID-NS (`admin.rs:247-264`): nguid/eui64 zero; UUID via CNS 03 from config
   device.uuid or FNV-derived (`subsystem.rs:49-61`; runtime ADD_NAMESPACE
-  always derived `server.rs:216`); NMIC=SHARED; dlfeat=1; anagrpid=0.
+  always derived `server.rs:216`); NMIC=SHARED; dlfeat=1; anagrpid=0;
+  NSFEAT/NAWUN/NPWG/NPDG/NOWS zero *(filled from `Backend::topology` for
+  bdevs since `e03bf0c`)*.
 - ID-CTRL (`admin.rs:148-239`): VID/SSVID 0, IEEE OUI zero, SN=subsys
   serial (default IOUTGT0001, `config.rs:384`) or "ioutgt-disc", MN
   hard-coded "ioutgt" (config `model` attr parsed but not used,
@@ -735,9 +765,12 @@ WRITE+SEND. SRQ: not found. `--poll` adaptive busy-poll
 AnyBackend = Null | Memory | File (`lib.rs:22-29`). File = regular files +
 bdevs (`file.rs:144-231`), O_DIRECT with fallback buffered+RWF_DONTCACHE;
 flush=fsync (`file.rs:380`); discard PUNCH_HOLE on files, no-op on bdevs
-(`file.rs:388-405`); write-zeroes ZERO_RANGE→PUNCH_HOLE→zero writes
-(`file.rs:407-440`). Config-file namespaces always File (`nvmet.rs:174`).
-Passthru, zoned, PI, configurable block size, buffered_io knob: not found.
+(`file.rs:388-405`) *(`BLOCK_URING_CMD_DISCARD` on bdevs since `069980e`)*;
+write-zeroes ZERO_RANGE→PUNCH_HOLE→zero writes (`file.rs:407-440`)
+*(bdevs: single ZERO_RANGE; only `EOPNOTSUPP` advances the file chain,
+since `069980e`)*. Config-file namespaces always File (`nvmet.rs:174`).
+Passthru, zoned, PI, buffered_io knob: not found. Block size: hard-coded
+*(probed since `8403a85`; topology since `e03bf0c`)*.
 
 ### B.7 Control plane
 
@@ -769,9 +802,10 @@ present: no ANA log, ANAGRPID 0, CMIC bit 3 clear.
 removal; dead-thread mailbox leak; RAE semantics, real SMART/error logs,
 LPO beyond discovery; persistent discovery ctrl (genctr bump, DISC_CHANGE
 AEN, OAES DISC_CHANGE); wildcard-traddr fixup + adrfam; host ACLs in
-control API; multiple ports in one process; TLS; bdev discard/write-zeroes
-via uring-cmd; NVMe passthrough backend; Metadata/PI, Write Protect,
-reservations. §5: graceful shutdown cmd, config reload, Prometheus.
+control API; multiple ports in one process; TLS; ~~bdev discard/write-zeroes
+via uring-cmd~~ (done, `069980e`); NVMe passthrough backend; Metadata/PI,
+Write Protect, reservations. §5: graceful shutdown cmd, config reload,
+Prometheus.
 `docs/nvmet-comparison.md:179-185`: minimal log pages, static genctr, no
 ANA. `docs/nvme-rdma.md:281-296`: conns pruned only on graceful disconnect;
 staged_len not cross-checked vs NLB; over-cap conns dropped without
