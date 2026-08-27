@@ -7,8 +7,9 @@ Format per the project specification: for each subsystem — Linux
 design, ioutgt design, differences, benefits, risks.
 
 Status: current as of the gather-send and direct-to-slot recv work
-(2026-06; §2 reflects both) and the nvmet-JSON multi-port config
-work (2026-07; §9). Benchmark-backed claims are limited
+(2026-06; §2 reflects both), the nvmet-JSON multi-port config
+work (2026-07; §9) and the VWC / bdev discard / LBA-probe / topology
+series (2026-08; §4, §5). Benchmark-backed claims are limited
 to ioutgt-internal A/B measurements (`docs/perf-notes.md`); the
 head-to-head against nvmet is deferred (`docs/benchmark-plan.md`).
 
@@ -104,7 +105,12 @@ syscalls/op on the echo fixture). No softirq sharing: the thread's
 cycles are entirely its own.
 
 **Risks.** DDGST failure fails the affected command with
-`NVME_SC_DATA_XFER_ERROR` and keeps the connection, matching nvmet.
+`NVME_SC_DATA_XFER_ERROR` and keeps the connection — gentler than
+nvmet, which sets `NVME_SC_CMD_SEQ_ERROR` and then tears the connection
+down before the CQE is ever sent (`nvmet_tcp_try_recv_ddgst` returns
+`-EPROTO`); nvmet likewise never emits a C2HTermReq and does not parse
+H2CTermReq, so every protocol error there is a socket shutdown or a
+controller fatal error, where ioutgt answers with typed FES codes.
 The remaining copy asymmetry vs nvmet is the small-write/prefix copy
 noted above — accepted deliberately for the batching win
 (`docs/perf-notes.md` has the A/B numbers).
@@ -146,9 +152,13 @@ rate) keeps queue threads free of accept/negotiation states entirely.
 
 **Risks.** The control thread is a connect-rate serialization point —
 irrelevant for storage workloads (hundreds of connections), but a
-difference from nvmet's fully distributed accept. Host ACLs
-(`allow_any_host = false` paths) are not yet enforced beyond a flag
-check.
+difference from nvmet's fully distributed accept. Host ACLs are
+enforced at Connect like nvmet's `nvmet_host_allowed`: a subsystem
+admits a hostnqn when `allow_any_host` is set or it is listed in
+`allowed_hosts` (`Subsystem::admits`), else the Connect fails with
+`CONNECT_INVALID_HOST`; the nvmetcli config defaults to deny unless
+listed. Host ACL *objects* mutable at runtime (nvmet's `hosts/`
+symlinks) remain absent — see §9.
 
 ## 4. Admin commands, discovery, async events
 

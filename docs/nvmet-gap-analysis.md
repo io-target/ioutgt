@@ -174,14 +174,14 @@ R = `crates/ioutgt-nvme-rdma/src`, K = `drivers/nvme/target`.
 - **Adaptive poll** on the RDMA binary (`--poll`).
 - **Per-queue stats** without atomics (`GET_STATS`, `ioutgt stat -i`).
 
-## 3. Corrections owed to `docs/nvmet-comparison.md`
+## 3. Corrections made to `docs/nvmet-comparison.md` (2026-08-27)
 
-- **§2:** "DDGST failure … matching nvmet" — wrong in ioutgt's favour; nvmet
-  tears the connection down (see §2 above).
-- **§3 (line ~150):** "Host ACLs … not yet enforced beyond a flag check" —
-  stale; enforced since `f4793da` (`N/fabrics_exec.rs:319-326`,
+- **§2:** "DDGST failure … matching nvmet" was wrong in ioutgt's favour —
+  nvmet tears the connection down (see §2 above); now stated as such.
+- **§3:** "Host ACLs … not yet enforced beyond a flag check" was stale —
+  enforced since `f4793da` (`N/fabrics_exec.rs:319-326`,
   `core/subsystem.rs:135-137`, default deny-unless-listed
-  `control/nvmet.rs:190-191`).
+  `control/nvmet.rs:190-191`); now describes the enforcement.
 
 ## 4. Out of scope (not counted)
 
