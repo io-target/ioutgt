@@ -23,7 +23,7 @@ pub mod registry;
 pub mod slotq;
 pub mod subsystem;
 
-pub use backend::{Backend, BackendError, LbaRange};
+pub use backend::{Backend, BackendError, LbaRange, Topology};
 
 /// Largest queue we accept (for NVMe, CAP.MQES advertises this minus one).
 ///

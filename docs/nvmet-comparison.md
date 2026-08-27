@@ -234,7 +234,15 @@ sectors). Files: nvmet takes the inode's `i_blkbits`; ioutgt takes the
 constraint, so a file on a 512e disk stays 512 B where nvmet would
 advertise the filesystem's 4 KiB block — and falls back to `st_blksize`
 where the filesystem reports none (btrfs); both cap files at 4 KiB.
-Floored at 512 B; memory/null stores use 512 B.
+Floored at 512 B; memory/null stores use 512 B. Below the LBA, both
+forward a block device's topology in Identify Namespace the way
+`nvmet_bdev_set_limits` does — NSFEAT atomics + OPTPERF, NAWUN/NAWUPF/
+NACWU from the physical block, NPWG/NPWA from `io_min`, NPDG/NPDA from
+the discard granularity, NOWS from `io_opt` (ioutgt: `BLKPBSZGET`/
+`BLKIOMIN`/`BLKIOOPT` + sysfs `discard_granularity`, `Backend::topology`)
+— so a 512e drive's 4 KiB physical block reaches the host's
+`physical_block_size`/`io_min` instead of the host assuming physical ==
+logical. Files and memory advertise none, like nvmet's file backend.
 
 **Risks.** No metadata/PI, no zoned support. The bdev path — LBA-size
 probing, discard and write-zeroes reaching the store — is gated in the

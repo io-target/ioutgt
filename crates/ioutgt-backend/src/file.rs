@@ -35,7 +35,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ioutgt_core::pool::{MAX_SEGS, Seg};
-use ioutgt_core::{Backend, BackendError, LbaRange};
+use ioutgt_core::{Backend, BackendError, LbaRange, Topology};
 use ioutgt_uring::ops;
 
 /// Backing kind, decided by `fstat` at open.
@@ -65,6 +65,8 @@ pub struct FileBackend {
     /// `RWF_DONTCACHE` usable on the buffered fd. Optimistically true;
     /// self-corrects to false on the first `EOPNOTSUPP`/`EINVAL`.
     dontcache: AtomicBool,
+    /// Block-device IO topology (default for regular files).
+    topology: Topology,
 }
 
 /// Query DIO alignment via `statx(STATX_DIOALIGN)`. Returns
@@ -87,6 +89,46 @@ fn query_dioalign(fd: RawFd) -> (u32, u32) {
         return (0, 0);
     }
     (stx.stx_dio_mem_align, stx.stx_dio_offset_align)
+}
+
+/// A block device's IO topology: the `BLKPBSZGET`/`BLKIOMIN`/`BLKIOOPT`
+/// ioctls, plus `queue/discard_granularity` from sysfs (it has no ioctl),
+/// reached through the device number. A partition's sysfs node has no
+/// `queue/` of its own — the ioctls answer for it, but the granularity
+/// lives one level up, in the disk's — so `../queue/` is the fallback,
+/// as `bdev_discard_granularity()` reads the disk's queue for a partition
+/// too. Best effort: anything unreadable stays 0 (= unknown) and the
+/// corresponding Identify NS hint is omitted.
+fn block_topology(fd: RawFd, rdev: libc::dev_t) -> Topology {
+    // _IO(0x12, 123) / _IO(0x12, 120) / _IO(0x12, 121)
+    const BLKPBSZGET: libc::c_ulong = 0x127B;
+    const BLKIOMIN: libc::c_ulong = 0x1278;
+    const BLKIOOPT: libc::c_ulong = 0x1279;
+    let ioctl_u32 = |req: libc::c_ulong| -> u32 {
+        let mut v: libc::c_uint = 0;
+        // SAFETY: valid fd; each of these ioctls writes an unsigned int.
+        if unsafe { libc::ioctl(fd, req, &raw mut v) } < 0 {
+            return 0;
+        }
+        v
+    };
+    let major = libc::major(rdev);
+    let minor = libc::minor(rdev);
+    let node = format!("/sys/dev/block/{major}:{minor}");
+    let discard_granularity = [
+        format!("{node}/queue/discard_granularity"),
+        format!("{node}/../queue/discard_granularity"),
+    ]
+    .iter()
+    .find_map(|path| std::fs::read_to_string(path).ok())
+    .and_then(|s| s.trim().parse::<u32>().ok())
+    .unwrap_or(0);
+    Topology {
+        physical_block: ioctl_u32(BLKPBSZGET),
+        io_min: ioctl_u32(BLKIOMIN),
+        io_opt: ioctl_u32(BLKIOOPT),
+        discard_granularity,
+    }
 }
 
 /// LBA size (as a shift) for a store whose IO unit is `align` bytes
@@ -211,6 +253,7 @@ impl FileBackend {
             return Err(io::Error::last_os_error());
         }
         let (dio_mem, dio_off) = query_dioalign(fd.as_raw_fd());
+        let mut topology = Topology::default();
         let (kind, size_bytes, align) = if stat.st_mode & libc::S_IFMT == libc::S_IFBLK {
             let mut size: u64 = 0;
             // BLKGETSIZE64 = _IOR(0x12, 114, size_t)
@@ -227,6 +270,7 @@ impl FileBackend {
             if unsafe { libc::ioctl(fd.as_raw_fd(), BLKSSZGET, &raw mut lbs) } < 0 {
                 return Err(io::Error::last_os_error());
             }
+            topology = block_topology(fd.as_raw_fd(), stat.st_rdev);
             (Kind::Block, size, u32::try_from(lbs).unwrap_or(0))
         } else if stat.st_mode & libc::S_IFMT == libc::S_IFREG {
             // The DIO offset alignment is the O_DIRECT unit; a filesystem
@@ -273,6 +317,7 @@ impl FileBackend {
             nr_blocks,
             direct,
             dontcache: AtomicBool::new(true),
+            topology,
         })
     }
 
@@ -384,6 +429,10 @@ impl Backend for FileBackend {
 
     fn nr_blocks(&self) -> u64 {
         self.nr_blocks
+    }
+
+    fn topology(&self) -> Topology {
+        self.topology
     }
 
     async fn read(&self, slba: u64, buf: &mut [u8]) -> Result<(), BackendError> {

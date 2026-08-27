@@ -144,8 +144,12 @@ six obligations of the transport contract (setup → install → recv path
   `statx` DIO offset alignment else `st_blksize` (file, capped 4 KiB),
   floored 512 B; the loop-device
   guest test runs at `--sector-size 4096` and asserts the host sees 4 KiB
-  LBAs. Still open: `npwg`/`nows` from the physical block size for 512e
-  drives (perf hint, not correctness).
+  LBAs.
+- ~~`npwg`/`nows` hints for 512e drives~~ — **done** (2026-08-27):
+  `Backend::topology` (`BLKPBSZGET`/`BLKIOMIN`/`BLKIOOPT` + sysfs discard
+  granularity on bdevs) feeds NSFEAT/NAWUN/NPWG/NPDG/NOWS as
+  `nvmet_bdev_set_limits` does; `ioutgt_bdev_topology.sh` (scsi_debug 512e
+  stand-in) asserts the host's queue limits equal the backing disk's.
 - Metadata/PI formats, Write Protect, reservations — driven by
   demand.
 

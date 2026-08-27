@@ -459,7 +459,10 @@ trait Backend {
     async fn flush(&self) -> Result<(), BackendError>;
     async fn discard(&self, ranges: &[LbaRange]) -> Result<(), BackendError>;
     async fn write_zeroes(&self, range: LbaRange) -> Result<(), BackendError>;
-    // size / block_size / topology probes
+    fn block_shift(&self) -> u8;      // probed LBA size
+    fn nr_blocks(&self) -> u64;
+    fn topology(&self) -> Topology;   // bdev physical block / io_min / io_opt /
+                                      // discard granularity -> Identify NS hints
 }
 ```
 

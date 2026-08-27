@@ -16,7 +16,7 @@ pub use memory::MemoryBackend;
 pub use null::NullBackend;
 
 use ioutgt_core::pool::Seg;
-use ioutgt_core::{Backend, BackendError, LbaRange};
+use ioutgt_core::{Backend, BackendError, LbaRange, Topology};
 
 /// All compiled-in backends, for heterogeneous namespace maps.
 pub enum AnyBackend {
@@ -42,6 +42,14 @@ impl Backend for AnyBackend {
             AnyBackend::Null(b) => b.nr_blocks(),
             AnyBackend::Memory(b) => b.nr_blocks(),
             AnyBackend::File(b) => b.nr_blocks(),
+        }
+    }
+
+    fn topology(&self) -> Topology {
+        match self {
+            AnyBackend::Null(b) => b.topology(),
+            AnyBackend::Memory(b) => b.topology(),
+            AnyBackend::File(b) => b.topology(),
         }
     }
 

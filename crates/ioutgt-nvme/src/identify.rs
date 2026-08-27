@@ -130,6 +130,19 @@ pub mod cmic {
     pub const MULTI_CTRL: u8 = 1 << 1;
 }
 
+/// NSFEAT bits (Identify Namespace: namespace features).
+pub mod nsfeat {
+    /// NAWUN/NAWUPF/NACWU are valid — the host derives its atomic write
+    /// limits and `physical_block_size` from NAWUPF
+    /// (`nvme_configure_atomic_write`).
+    pub const ATOMICS: u8 = 1 << 1;
+    /// OPTPERF (bits 5:4, both set as nvmet does): NPWG/NPWA/NPDG/NPDA/NOWS
+    /// are valid — the host maps NPWG to `io_min`/`physical_block_size`,
+    /// NOWS to `io_opt`, NPDG/NPDA to `discard_granularity`
+    /// (`nvme_update_disk_info`).
+    pub const OPTPERF: u8 = 0x3 << 4;
+}
+
 /// NMIC bits (Identify Namespace: multi-path I/O & namespace sharing).
 pub mod nmic {
     /// The namespace may be attached to two or more controllers at once
