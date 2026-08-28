@@ -16,3 +16,6 @@ flamegraph*.svg
 *~
 # vmtest VM images + host<->guest markers (see testing/common/vmtest.conf)
 /testing/vmtest/data/
+
+# Harness-managed git worktrees (EnterWorktree) live inside the checkout.
+/.claude/worktrees/
