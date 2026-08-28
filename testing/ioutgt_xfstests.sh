@@ -13,8 +13,8 @@
 #
 # Modes:
 #   HOST  (run directly): builds the ioutgt-nvme-tcp + ioutgt-nvme-rdma
-#         binaries (ioutgt mode), copies this script into the vmtest tests
-#         dir, and launches the guest. vmtest re-invokes it inside the guest:
+#         binaries (ioutgt mode) and launches the guest, which re-invokes
+#         this same file (9p-visible at its host path) as:
 #             ioutgt_xfstests --guest <ioutgt|nvmet> <tcp-bin> <rdma-bin> [check args...]
 #   GUEST (--guest ...): does the real work.
 #
@@ -86,17 +86,16 @@ if [ "${1:-}" != "--guest" ]; then
 		done
 	fi
 
-	# vmtest runs tests/NAME.sh; publish this entrypoint under that name. The
-	# guest sees the built binaries at their host absolute paths via 9p.
-	cp "$TOP/testing/ioutgt_xfstests.sh" \
-		"$(dirname "$VMTEST")/tests/ioutgt_xfstests.sh"
 	# Hard wall-clock cap on the whole VM: if a target wedges (e.g. an RDMA
 	# error-recovery hang leaves a test in uninterruptible sleep), ./check
 	# inside the guest can never be killed, so bound it from OUTSIDE by killing
 	# qemu. Without this the run hangs forever.
 	RUN_TIMEOUT="${IOUTGT_XFSTESTS_TIMEOUT:-200m}"
+	# Run by path: the guest sees this checkout (and the built binaries) at
+	# their host absolute paths via 9p, so the script re-invokes itself in
+	# --guest mode straight out of the tree.
 	exec timeout --kill-after=30s "$RUN_TIMEOUT" \
-		"$VMTEST" -c "$VMTEST_CONF" run ioutgt_xfstests \
+		"$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/ioutgt_xfstests.sh" \
 		--guest "$MODE" "$TCP_BIN" "$RDMA_BIN" "${CHECK_ARGS[@]}"
 fi
 

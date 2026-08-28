@@ -10,7 +10,26 @@ TOP="$(cd "$(dirname "$0")/.." && pwd)"
 # the guest via the 9p marker dir below (env does not cross into the VM).
 # Other tests ignore it; override for a different fio build.
 T_IO_URING="${T_IO_URING:-$HOME/git/fio/t/io_uring}"
+# The guest test to run. A bare name resolves against testing/vmtest/, so
+# the short forms stay -- `testing/run_interop.sh ioutgt_fio`. A path is
+# taken as given, for a test living elsewhere. Resolved here rather than
+# handed to the harness as a registered name: the tests are ours and live
+# in this checkout, so a fresh clone runs the acceptance matrix with no
+# second repo in the right state.
 TEST_NAME="${1:-ioutgt_nvme_tcp}"
+if [ -f "$TEST_NAME" ]; then
+    TEST_SCRIPT="$TEST_NAME"
+else
+    TEST_SCRIPT="$TOP/testing/vmtest/$TEST_NAME.sh"
+    [ -f "$TEST_SCRIPT" ] || {
+        echo "no such test: $TEST_NAME" >&2
+        echo "available:" >&2
+        for f in "$TOP"/testing/vmtest/*.sh; do
+            grep -q '^# vmtest-desc:' "$f" && echo "  $(basename "${f%.sh}")" >&2
+        done
+        exit 2
+    }
+fi
 # Dedicated port: 4420 is the canonical NVMe port and may be owned by
 # other targets on a dev box (kernel nvmet, etc.).
 PORT="${IOUTGT_PORT:-14420}"
@@ -125,7 +144,7 @@ done
 echo "ioutgt up (pid $TARGET_PID); starting VM test $TEST_NAME"
 
 set +e
-"$VMTEST" -c "$VMTEST_CONF" run "$TEST_NAME"
+"$VMTEST" -c "$VMTEST_CONF" run "$TEST_SCRIPT"
 RC=$?
 set -e
 

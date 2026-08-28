@@ -4,7 +4,7 @@
 #
 # A sourced library, not a runnable test: expects lib/common.sh helpers
 # and config already loaded. Entry points live in testing/vmtest/
-# (run_nvme_tcp.sh, run_fio.sh).
+# (ioutgt_nvme_tcp.sh, ioutgt_fio.sh).
 set -eu
 
 ADDR="${IOUTGT_ADDR:-10.0.2.2}"

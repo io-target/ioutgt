@@ -2,7 +2,7 @@
 # Generic runner for the guest tests in testing/vmtest/.
 #
 #   testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
-#   testing/run_vmtest.sh testing/vmtest/run_fio.sh -g quick
+#   testing/run_vmtest.sh testing/vmtest/ioutgt_fio.sh
 #   testing/run_vmtest.sh testing/vmtest/           # every test in the dir
 #
 # Takes a script's path, and anything after it is passed to that test; or

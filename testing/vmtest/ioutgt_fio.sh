@@ -3,7 +3,7 @@
 # vmtest-desc: ioutgt NVMe/TCP fio data-integrity verify (target on host)
 # vmtest-requires: root nvme-cli fio
 #
-#   testing/run_interop.sh "$PWD/testing/vmtest/run_fio.sh"
+#   testing/run_interop.sh "$PWD/testing/vmtest/ioutgt_fio.sh"
 set -eu
 
 . "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
