@@ -6,12 +6,12 @@
 # Self-contained entry point: runnable directly by vmtest, no stub in the
 # vmtest checkout's tests/ needed.
 #
-#   testing/run_interop.sh "$PWD/testing/vmtest/run_nvme_tcp.sh"
+#   testing/run_interop.sh "$PWD/testing/vmtest/ioutgt_nvme_tcp.sh"
 #
 # or straight through the harness:
 #
 #   ~/git/utils/vmtest/vmtest -c ~/git/linux-ioutgt/vmtest.conf \
-#       run "$PWD/testing/vmtest/run_nvme_tcp.sh"
+#       run "$PWD/testing/vmtest/ioutgt_nvme_tcp.sh"
 set -eu
 
 # We live outside the vmtest checkout, so lib/ is reached through
