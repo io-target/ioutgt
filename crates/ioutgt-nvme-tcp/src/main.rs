@@ -157,8 +157,22 @@ fn main() -> std::io::Result<()> {
                 .unwrap_or_else(default_control_socket)
         };
         match command {
-            Command::Ctl { socket, request } => return ctl(&sock(socket), request),
-            Command::List { socket } => return list_target(&sock(socket)),
+            Command::Ctl { socket, request } => {
+                // The harness reports the server verdict; ending the
+                // process on it is the binary's call, not the library's.
+                return if ctl(&sock(socket), request)? {
+                    Ok(())
+                } else {
+                    std::process::exit(1)
+                };
+            }
+            Command::List { socket } => {
+                return if list_target(&sock(socket))? {
+                    Ok(())
+                } else {
+                    std::process::exit(1)
+                };
+            }
             Command::Stat {
                 socket,
                 interval,
