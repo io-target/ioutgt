@@ -42,7 +42,7 @@ testing/run_affinity.sh           # multi-NUMA guest: spread_cpus placement (def
 Requires only [virtme-ng](https://github.com/arighi/virtme-ng) (`vng`) on
 `PATH`. `testing/common/runner.sh` boots the VM, `testing/common/vt.sh` is
 the in-guest helper library every guest test sources, and
-`testing/common/vmtest.sh` is this project's config (`KERNEL_DIR`,
+`testing/common/vmtest.sh` is this project's config (`VMTEST_KERNEL`,
 `VMTEST_NUMA_NODES`, `VMTEST_RWDIR` to share an extra directory into the
 guest).
 Knobs: `IOUTGT_BACKEND=memory|null|file`, `IOUTGT_ENABLE_KILL=1`

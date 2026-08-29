@@ -24,7 +24,7 @@
 # binaries, and the script itself are all reachable at their host absolute
 # paths -- nothing is copied in, and a test is just a root shell script
 # running against the working tree in a throwaway VM. Config comes from
-# vmtest.sh beside this file (kernel, sizing, networking, shares).
+# vmtest.sh beside this file (VMTEST_KERNEL, sizing, networking, shares).
 #
 # Exit status is the guest script's, and the codes are the contract a
 # sweep reads: 0 pass, 4 skip (a prerequisite the guest lacks), anything
@@ -61,8 +61,32 @@ fi
 
 VNG="${VMTEST_VNG:-vng}"
 command -v "$VNG" >/dev/null || vt_die "'$VNG' not found (install virtme-ng or set VMTEST_VNG)"
-[ -d "$KERNEL_DIR" ] || vt_die "KERNEL_DIR=$KERNEL_DIR does not exist"
-[ -f "$KERNEL_DIR/vmlinux" ] || vt_die "no vmlinux in $KERNEL_DIR — build the kernel first"
+
+# VMTEST_KERNEL goes straight to `vng --run`, which resolves a build
+# directory, a kernel image, an installed release (via
+# /usr/lib/modules/<rel>/vmlinuz, then /boot/vmlinuz-<rel>), or an
+# upstream tag it downloads. Check what we can here: an unresolvable
+# release string would otherwise reach vng as an opaque argument, and one
+# that happens to look like a tag would silently start a download.
+#
+# Always say which kernel this is: a project's default may adapt to the
+# machine (a build tree if present, the distribution kernel otherwise), so
+# "which kernel did that run against" must not need guessing.
+if [ -d "$VMTEST_KERNEL" ]; then
+    [ -f "$VMTEST_KERNEL/vmlinux" ] ||
+        vt_die "no vmlinux in $VMTEST_KERNEL — build the kernel first"
+    vt_log "kernel: build tree $VMTEST_KERNEL"
+elif [ -f "$VMTEST_KERNEL" ]; then
+    vt_log "kernel: image $VMTEST_KERNEL"
+else
+    case "$VMTEST_KERNEL" in
+    v[0-9]*) vt_log "kernel: upstream tag $VMTEST_KERNEL (vng will fetch it)" ;;
+    *)  [ -f "/usr/lib/modules/$VMTEST_KERNEL/vmlinuz" ] ||
+        [ -f "/boot/vmlinuz-$VMTEST_KERNEL" ] ||
+            vt_die "VMTEST_KERNEL='$VMTEST_KERNEL' is not a built kernel tree, a kernel image, or an installed release"
+        vt_log "kernel: installed release $VMTEST_KERNEL$([ "$VMTEST_KERNEL" = "$(uname -r)" ] && echo ' (the running one)')" ;;
+    esac
+fi
 
 TMPDIR="$VMTEST_DATA_DIR/tmp"
 export TMPDIR
@@ -195,6 +219,18 @@ fi
 #
 # 3) The guest env advertises XDG_RUNTIME_DIR but its creation depends on
 #    boot details; tests bind sockets under it, so guarantee it exists.
+#
+# 4) virtme-ng-init configures the NICs it finds under
+#    /sys/bus/virtio/drivers/virtio_net/ BEFORE it runs udev coldplug, and
+#    never looks again. With virtio_net built as a module -- distribution
+#    kernels: Fedora and Ubuntu both ship CONFIG_VIRTIO_NET=m -- the device
+#    can appear only after coldplug loads the module, and then no DHCP ever
+#    runs for it: the guest boots with no usable netdev and every test that
+#    reaches 10.0.2.2 fails. A dev tree with =y never shows this. Configure
+#    any NIC still without an address. User-mode networking is the only
+#    kind this runner sets up, and SLIRP hands out exactly 10.0.2.15/24 via
+#    10.0.2.2 every time, so a static assignment is what DHCP would have
+#    done. Only when the guest has networking at all (virtme.dhcp on the
 PRELUDE="$TMPDIR/vmtest-prelude.sh"
 # The nosuid pass is ONLY needed (and only applied) when the mask is active:
 # without the user namespace, setuid binaries work normally and the guest
@@ -255,6 +291,24 @@ if os.environ.get("VMTEST_MASK_ON") == "1":
             flags |= OPT.get(o, 0)
         libc.mount(b"none", mnt.encode(), None, flags, None)
 PY
+
+# (4) virtio NICs that appeared after virtme-ng-init's network setup.
+if grep -qE '(^| )virtme\.dhcp($| )' /proc/cmdline; then
+    modprobe virtio_net 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        ls -d /sys/bus/virtio/drivers/virtio_net/virtio*/net/* >/dev/null 2>&1 && break
+        sleep 0.5
+    done
+    for d in /sys/bus/virtio/drivers/virtio_net/virtio*/net/*; do
+        [ -e "$d" ] || continue
+        n=$(basename "$d")
+        ip -o -4 addr show dev "$n" 2>/dev/null | grep -q inet && continue
+        ip link set dev "$n" up
+        ip addr add 10.0.2.15/24 dev "$n" 2>/dev/null || true
+        ip route add default via 10.0.2.2 dev "$n" 2>/dev/null || true
+        echo "vmtest-prelude: $n had no address (virtio_net loaded after init's network setup); configured 10.0.2.15/24"
+    done
+fi
 PRELUDE_BODY
 chmod +x "$PRELUDE"
 
@@ -286,7 +340,7 @@ else
     MODE_ARGS=(--exec "bash $PRELUDE; env PATH=$GUEST_PATH $GUEST_ENV $TEST_CMD $*")
 fi
 
-exec "${MASK_WRAP[@]}" "$VNG" --run "$KERNEL_DIR" --force-9p \
+exec "${MASK_WRAP[@]}" "$VNG" --run "$VMTEST_KERNEL" --force-9p \
     --cpus "$VMTEST_CPUS" --memory "$VMTEST_MEM" \
     --verbose \
     --user root \

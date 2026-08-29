@@ -154,7 +154,7 @@ environment can override:
 
 ```sh
 # one test: build ioutgt, start it on the host, boot the guest, tear down
-KERNEL_DIR=~/git/linux testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
+VMTEST_KERNEL=$(uname -r) testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
 
 # every test under a directory, each in its own VM, with a pass/fail summary
 testing/run_vmtest.sh testing/vmtest/
@@ -166,10 +166,17 @@ testing/run_interop.sh
 testing/common/runner.sh --shell
 ```
 
-`KERNEL_DIR` selects the kernel tree, `VMTEST_NUMA_NODES` the guest's
-NUMA shape (4 by default, so the affinity test has something to check),
-and `VMTEST_RWDIR` shares extra host directories in read-write — useful
-for putting backing images on a real filesystem instead of 9p:
+`VMTEST_KERNEL` selects the kernel, in any form `vng --run` takes: a
+built tree, a kernel image, an upstream tag it downloads, or an installed
+release — so the distribution's own kernel needs no source tree and no
+build at all, which is the quickest way to check ioutgt against a stock,
+shipped initiator. It defaults to the kernel the host is running, and
+the runner logs which kernel it booted and how it resolved it.
+
+`VMTEST_NUMA_NODES` sets the guest's NUMA shape (4 by default, so the
+affinity test has something to check), and `VMTEST_RWDIR` shares extra
+host directories in read-write — useful for putting backing images on a
+real filesystem instead of 9p:
 
 ```sh
 VMTEST_RWDIR=/mnt/nvme testing/ioutgt_xfstests.sh

@@ -5,7 +5,7 @@
 # without editing this file:
 #
 #   VMTEST_NUMA_NODES=1 testing/run_interop.sh
-#   KERNEL_DIR=~/git/linux-next testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
+#   VMTEST_KERNEL=~/git/linux-next testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
 #
 # Resolved from this file's own location, never the caller's cwd.
 _VMTEST_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,9 +14,18 @@ _VMTEST_TOP="$(cd "$_VMTEST_SH_DIR/../.." && pwd)"
 # The launcher itself, so a runner does not have to spell out the path.
 RUN_VM="${RUN_VM:-$_VMTEST_TOP/testing/common/runner.sh}"
 
-# Kernel tree to boot. Machine-specific, so it normally comes from the
-# shell; the fallback keeps the common case working with no env set.
-KERNEL_DIR="${KERNEL_DIR:-$HOME/git/linux-ioutgt}"
+# Kernel to boot: the distribution kernel that is running, by default --
+# no source tree, no build -- so a fresh clone runs the VM tests on any
+# machine with vng installed. Testing a kernel under development is a
+# shell-side choice, in any form vng --run accepts:
+#
+#   VMTEST_KERNEL=~/git/linux-next       a built kernel tree
+#   VMTEST_KERNEL=/boot/vmlinuz-6.17     a kernel image by path
+#   VMTEST_KERNEL=6.17.3-200.fc43.x86_64 an installed release
+#   VMTEST_KERNEL=v6.6.17                an upstream tag, downloaded by vng
+#
+# The runner logs which kernel it booted either way.
+VMTEST_KERNEL="${VMTEST_KERNEL:-$(uname -r)}"
 
 # The 9p share the guest mounts read-write: the tmp/ marker directory used
 # for host<->guest signalling, plus anything that must outlive the VM

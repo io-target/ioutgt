@@ -27,7 +27,7 @@
 # Knobs: IOUTGT_BACKEND=memory|null|file, IOUTGT_FILE_MB, IOUTGT_PORT,
 #   IOUTGT_IO_THREADS, IOUTGT_SEND_ZC=1, IOUTGT_IO_QUEUE_SIZE,
 #   IOUTGT_RECV_BUF_MB, IOUTGT_ENABLE_KILL=1; VM config in
-#   testing/common/vmtest.sh (KERNEL_DIR, VMTEST_RWDIR, VMTEST_NUMA_NODES).
+#   testing/common/vmtest.sh (VMTEST_KERNEL, VMTEST_RWDIR, VMTEST_NUMA_NODES).
 set -eu
 
 TOP="$(cd "$(dirname "$0")/.." && pwd)"

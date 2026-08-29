@@ -32,7 +32,7 @@
 #   testing/ioutgt_xfstests.sh generic/013 generic/020
 #   testing/ioutgt_xfstests.sh -x dio -g quick # exclude a group
 #
-# Host knobs (env): KERNEL_DIR (kernel tree to boot), VMTEST_RWDIR (share a
+# Host knobs (env): VMTEST_KERNEL (kernel to boot), VMTEST_RWDIR (share a
 #   real filesystem into the guest, so the 8G images need not sit on 9p),
 #   IOUTGT_PROFILE (release|debug, default release),
 #   IOUTGT_XFSTESTS_TIMEOUT (outer VM wall-clock cap, default 200m).
