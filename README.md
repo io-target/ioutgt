@@ -162,6 +162,31 @@ described in [`testing/README.md`](testing/README.md).
   point `LIBCLANG_PATH` at a clang-19 install when the system clang is
   newer
 
+## Installing
+
+ioutgt is not published to crates.io — build it from this repository:
+
+```sh
+# the NVMe/TCP target
+cargo install --git https://github.com/io-target/ioutgt ioutgt-nvme-tcp
+
+# the NVMe/RDMA target (needs rdma-core headers; see Requirements)
+cargo install --git https://github.com/io-target/ioutgt ioutgt-nvme-rdma
+```
+
+or from a checkout, which is what you want while developing:
+
+```sh
+cargo build --release -p ioutgt-nvme-tcp   # ./target/release/ioutgt-nvme-tcp
+```
+
+The workspace ships two binaries; the eight library crates behind them
+(`ioutgt-core`, `ioutgt-uring`, …) are internal structure, not a public
+API, and are marked `publish = false`. Their boundaries exist to enforce
+the dependency rules in [`docs/architecture.md`](docs/architecture.md) —
+`ioutgt-core` must not reach for `ioutgt-uring`, the NVMe codec must stay
+sans-IO — which the compiler checks and a convention would not.
+
 ## Status
 
 Early development. Milestones and progress are tracked in

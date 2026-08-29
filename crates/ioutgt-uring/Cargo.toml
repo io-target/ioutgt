@@ -2,6 +2,7 @@
 name = "ioutgt-uring"
 description = "Per-thread io_uring reactor and op futures integrated with a Tokio current-thread runtime"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
