@@ -2,6 +2,7 @@
 name = "ioutgt-nvme"
 description = "NVMe protocol: sans-IO codec (spec types, PDU codec, digests) plus transport-independent command execution"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

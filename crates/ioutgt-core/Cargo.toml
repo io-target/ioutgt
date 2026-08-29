@@ -2,6 +2,7 @@
 name = "ioutgt-core"
 description = "Protocol-neutral queue engine (slots, buffers, permits, backend trait) and structural target model (subsystems, controller registry)"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

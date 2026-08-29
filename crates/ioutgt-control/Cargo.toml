@@ -2,6 +2,7 @@
 name = "ioutgt-control"
 description = "Control plane: Unix-domain-socket JSON API and target configuration schema"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

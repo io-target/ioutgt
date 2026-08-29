@@ -18,6 +18,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
+publish = false
 repository = "https://github.com/io-target/ioutgt"
 authors = ["Ming Lei <tom.leiming@gmail.com>"]
 description = "Userspace NVMe/TCP storage target built on io_uring"
