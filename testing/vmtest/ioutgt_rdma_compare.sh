@@ -41,6 +41,10 @@ DEV="$RXE_DEV" IP="$RXE_IP"
 log "[compare] rxe up on $DEV ip=$IP"
 
 # --- loop-backed block-device backends --------------------------------------
+# Distribution kernels build loop as a module (Fedora: CONFIG_BLK_DEV_LOOP=m),
+# and without it losetup fails with a misleading "No such file or directory"
+# for the image; a dev tree with it built in hides the omission.
+modprobe loop 2>/dev/null || fail "no loop device support (CONFIG_BLK_DEV_LOOP)"
 truncate -s 512M /tmp/cmp-io.img /tmp/cmp-nv.img
 LOOP_IO=$(losetup -f --show /tmp/cmp-io.img)
 LOOP_NV=$(losetup -f --show /tmp/cmp-nv.img)
