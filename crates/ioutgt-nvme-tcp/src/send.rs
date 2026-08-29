@@ -120,10 +120,38 @@ pub(crate) async fn send_loop(
     // enabling vectored fixed-buffer ZC sends (no per-send IOMMU map). `None`
     // (pool unregistered) keeps the heap arena + plain SENDMSG_ZC path.
     let pool = queue.nvme.slots.pool();
-    let pool_arena = pool
-        .send_arena()
-        .and_then(|(ptr, _)| pool.buf_index().map(|idx| (ptr, idx)));
-    let mut sender = StreamSender::new(queue.sqsize, ARENA_PER_ITEM, IOVS_PER_ITEM, pool_arena);
+    // Keep the reserved length rather than dropping it: it is what makes the
+    // unsafe call below sound, and checking the value we hold beats trusting
+    // that the reservation in connection.rs still matches this sizing.
+    let pool_arena = pool.send_arena().and_then(|(ptr, len)| {
+        let need = 2 * usize::from(queue.sqsize) * ARENA_PER_ITEM;
+        assert!(
+            len >= need,
+            "send arena is {len} bytes, need {need} for two {ARENA_PER_ITEM}-byte gathers \
+             across {} slots",
+            queue.sqsize,
+        );
+        pool.buf_index().map(|idx| (ptr, idx))
+    });
+    // IOUTGT_ZC_MIN_BYTES sweeps the copy/zero-copy crossover during perf
+    // work; the knob belongs to the target, not to the send harness.
+    let zc_min_avg = std::env::var("IOUTGT_ZC_MIN_BYTES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(ioutgt_stream::DEFAULT_ZC_MIN_BYTES);
+    // SAFETY: `pool_arena` is the send arena reserved from this queue's
+    // registered data pool above. It is at least 2 * sqsize * ARENA_PER_ITEM
+    // bytes, and the pool outlives the sender, which is dropped when this
+    // function returns.
+    let mut sender = unsafe {
+        StreamSender::new(
+            queue.sqsize,
+            ARENA_PER_ITEM,
+            IOVS_PER_ITEM,
+            pool_arena,
+            zc_min_avg,
+        )
+    };
     let result = sender
         .run(
             fd,

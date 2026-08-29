@@ -709,7 +709,17 @@ worst-case sizings. From `crates/ioutgt-nvme-tcp/src/send.rs`:
 const ARENA_PER_ITEM: usize = 64;  // C2HData hdr 24+4 + DDGST 4 + capsule 24+4
 const IOVS_PER_ITEM:  usize = 4;   // header, payload, digest, capsule (adjacent merge)
 
-let mut sender = StreamSender::new(queue.sqsize, ARENA_PER_ITEM, IOVS_PER_ITEM);
+// `pool_arena` is Some((ptr, buf_index)) when the send arenas were reserved
+// from the registered data pool — that is what enables vectored fixed-buffer
+// ZC sends. `new` is unsafe because nothing can check the pointer: it must
+// cover 2 * sqsize * ARENA_PER_ITEM bytes and outlive the sender.
+// `zc_min_avg` is the per-item average below which a batch copies instead of
+// pinning pages (DEFAULT_ZC_MIN_BYTES unless the caller sweeps it).
+let mut sender = unsafe {
+    StreamSender::new(
+        queue.sqsize, ARENA_PER_ITEM, IOVS_PER_ITEM, pool_arena, zc_min_avg,
+    )
+};
 sender.run(fd, send_zc, &queue.nvme.slots, &queue.send,
     |gather, work: &SendWork| {
         stage_send_work(gather, queue, work, hdr_digest, data_digest);  // encode PDUs
