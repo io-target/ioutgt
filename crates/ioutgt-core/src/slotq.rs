@@ -197,6 +197,14 @@ impl<C: Copy> SlotArray<C> {
     }
 
     /// The slot for `tag` (the wire transfer tag).
+    ///
+    /// # Panics
+    ///
+    /// If `tag >= nslots`. A tag that came off the wire must be bounds-
+    /// checked against the queue's `sqsize` before it gets here, and
+    /// rejected with a protocol error if it is out of range -- panicking
+    /// is not an acceptable answer to a malformed PDU. Both transports do
+    /// this at the point of decode.
     pub fn slot(&self, tag: u16) -> &Slot<C> {
         &self.slots[usize::from(tag)]
     }
