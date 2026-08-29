@@ -16,9 +16,13 @@ fn ctl_request(socket: &std::path::Path, request: &str) -> std::io::Result<Strin
     Ok(response)
 }
 
-/// `ioutgt ctl`: forward one JSON request verbatim, echo the raw
-/// response line, exit 1 unless the server said `"ok": true`.
-pub fn ctl(socket: &std::path::Path, request: &str) -> std::io::Result<()> {
+/// `ioutgt ctl`: forward one JSON request verbatim and echo the raw
+/// response line.
+///
+/// Returns whether the server said `"ok": true`; the caller decides what
+/// a `false` means for its exit status. A library must not end the
+/// process on its caller's behalf.
+pub fn ctl(socket: &std::path::Path, request: &str) -> std::io::Result<bool> {
     // Validate locally for a friendlier error than the server echo.
     serde_json::from_str::<serde_json::Value>(request)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
@@ -26,23 +30,22 @@ pub fn ctl(socket: &std::path::Path, request: &str) -> std::io::Result<()> {
     println!("{response}");
     let parsed = serde_json::from_str::<serde_json::Value>(&response)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    if parsed.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-        std::process::exit(1);
-    }
-    Ok(())
+    Ok(parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true))
 }
 
 /// `ioutgt list`: render the target's inventory and live controllers.
-pub fn list_target(socket: &std::path::Path) -> std::io::Result<()> {
+///
+/// Returns whether the server said `"ok": true`, as [`ctl`] does.
+pub fn list_target(socket: &std::path::Path) -> std::io::Result<bool> {
     let raw = ctl_request(socket, r#"{"op":"LIST_CONTROLLER"}"#)?;
     let response = serde_json::from_str::<serde_json::Value>(&raw)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     if response.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
         eprintln!("{raw}");
-        std::process::exit(1);
+        return Ok(false);
     }
     print!("{}", render_ctrl_list(&response["data"]));
-    Ok(())
+    Ok(true)
 }
 
 /// `ioutgt stat`: one snapshot, or `-i N` for iostat-style rates
