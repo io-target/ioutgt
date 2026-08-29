@@ -199,6 +199,16 @@ pub struct StreamSender {
 /// `zc_min_avg`); small-payload (copy) batches gather freely.
 const ZC_GATHER_CAP: usize = 1024 * 1024;
 
+/// Default per-item average below which a batch copies rather than pinning
+/// pages for zero-copy, for callers with no reason to pick another value.
+///
+/// Zero-copy is not free: each send maps and pins the payload pages, which
+/// costs more than a memcpy once the average item is small enough. 12 KiB
+/// is where the two met on the hardware this was measured on; the crossover
+/// moves with the NIC and the IOMMU, so it is a parameter rather than a
+/// constant of nature.
+pub const DEFAULT_ZC_MIN_BYTES: usize = 12288;
+
 impl StreamSender {
     /// A sender for a queue of `sqsize` slots. `arena_per_item` /
     /// `iovs_per_item` are the transport's worst-case per-item sizings
@@ -209,11 +219,24 @@ impl StreamSender {
     /// take the first and second halves so their gathers ship as vectored
     /// fixed-buffer ZC sends. `None` keeps both arenas on the heap (plain
     /// `SENDMSG_ZC`).
-    pub fn new(
+    ///
+    /// `zc_min_avg` is the per-item average byte count below which a batch
+    /// copies instead of pinning pages for zero-copy; see
+    /// [`DEFAULT_ZC_MIN_BYTES`].
+    ///
+    /// # Safety
+    ///
+    /// When `pool_arena` is `Some((ptr, _))`, `ptr` must be the start of a
+    /// readable, writable region of at least `2 * sqsize * arena_per_item`
+    /// bytes that stays alive and unaliased for the whole life of the
+    /// returned sender. Nothing here can check that, and the two batches
+    /// write into it directly.
+    pub unsafe fn new(
         sqsize: u16,
         arena_per_item: usize,
         iovs_per_item: usize,
         pool_arena: Option<(*mut u8, u16)>,
+        zc_min_avg: usize,
     ) -> StreamSender {
         let half = usize::from(sqsize) * arena_per_item;
         let batches = match pool_arena {
@@ -250,10 +273,7 @@ impl StreamSender {
             zc_copied: 0,
             zc_fallbacks: 0,
             vec_fixed_ok: pool_arena.is_some(),
-            zc_min_avg: std::env::var("IOUTGT_ZC_MIN_BYTES")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(12288),
+            zc_min_avg,
         }
     }
 
