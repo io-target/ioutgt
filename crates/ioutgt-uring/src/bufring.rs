@@ -259,9 +259,23 @@ impl BufRing {
     }
 
     /// Start of buffer `bid`'s data.
+    ///
+    /// `bid` is masked to the ring's entry count, as everywhere else here:
+    /// a buffer id arrives from a CQE, and taking it on trust would let a
+    /// malformed one index arbitrarily far past the arena from safe code.
     pub fn buf(&self, bid: u16) -> *mut u8 {
-        // SAFETY: bid < entries, so the offset stays within the arena.
-        unsafe { self.data.ptr.add(bid as usize * self.buf_size as usize) }
+        // The mask is the production hardening; this catches a bid the
+        // kernel should never have produced, which the mask would other-
+        // wise turn into a silent read of the *other* half of the double
+        // buffer -- corruption is harder to find than a failed test.
+        debug_assert!(
+            bid < NBUFS,
+            "buffer id {bid} past the ring's {NBUFS} entries"
+        );
+        let bid = (bid & BUF_MASK) as usize;
+        // SAFETY: the mask puts bid < entries, so the offset stays within
+        // the arena.
+        unsafe { self.data.ptr.add(bid * self.buf_size as usize) }
     }
 
     /// Hand buffer `bid` (back) to the kernel: write its ring entry, then

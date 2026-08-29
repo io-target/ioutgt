@@ -522,12 +522,41 @@ impl Reactor {
                 .submit_with_args(1, &args);
             match res {
                 Ok(_) => {}
+                // Benign ends to a wait, all meaning "no CQE yet": ETIME (the
+                // safety timespec expired), EINTR (a signal arrived), EBUSY
+                // (the CQ is full, so the kernel declined to submit -- the
+                // reap below drains it). Fall through and go round again.
                 Err(ref err)
                     if matches!(
                         err.raw_os_error(),
                         Some(libc::ETIME | libc::EINTR | libc::EBUSY)
                     ) => {}
-                Err(err) => panic!("io_uring_enter failed: {err}"),
+                // EAGAIN is the kernel failing to allocate for the request:
+                // transient memory pressure, not a broken ring, and a
+                // storage target under load is the workload that provokes
+                // it. Retrying is right, but unlike ETIME -- which costs a
+                // PARK_SAFETY_SECS block inside the kernel first -- EAGAIN
+                // returns immediately, so an unguarded retry would spin this
+                // core for as long as memory stays tight. Back off first.
+                // Sleeping is within park's remit: blocking the thread is
+                // the whole point of the hook.
+                Err(ref err) if err.raw_os_error() == Some(libc::EAGAIN) => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                // Anything else (EBADF, EFAULT, EINVAL) means this ring is
+                // unusable -- our bug, never the peer's -- and the thread
+                // cannot make progress again.
+                //
+                // Dying here is deliberate, not an oversight. Returning is
+                // not available: `add_park_probe` states the rule this hook
+                // lives under -- it must not return without having woken a
+                // waker, because that leaves the thread on tokio's condvar,
+                // which only a ring CQE can wake, and the ring is precisely
+                // what just died. The thread would hang silently with its
+                // connections stalled and the host left to time out. Nor is
+                // looping: the error is persistent, so that is a hot spin.
+                // A panic is the only outcome that says what happened.
+                Err(err) => panic!("io_uring_enter failed on a live ring: {err}"),
             }
             if self.reap() > 0 {
                 return;
