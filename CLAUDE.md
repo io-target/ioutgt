@@ -39,15 +39,19 @@ testing/run_interop.sh ioutgt_fio # only the fio data-integrity stage
 testing/run_affinity.sh           # multi-NUMA guest: spread_cpus placement (default-on)
 ```
 
-Requires the external vmtest harness (`https://github.com/ublk-org/vmtest`, config
-`vmtest.conf`; override via `VMTEST`/`VMTEST_CONF`).
+Requires only [virtme-ng](https://github.com/arighi/virtme-ng) (`vng`) on
+`PATH`. `testing/common/runner.sh` boots the VM, `testing/common/vt.sh` is
+the in-guest helper library every guest test sources, and
+`testing/common/vmtest.sh` is this project's config (`KERNEL_DIR`,
+`VMTEST_NUMA_NODES`, `VMTEST_RWDIR` to share an extra directory into the
+guest).
 Knobs: `IOUTGT_BACKEND=memory|null|file`, `IOUTGT_ENABLE_KILL=1`
 (kill/recovery), `IOUTGT_SOAK_ONLY=N` (reconnect-leak gate),
 `IOUTGT_SEND_ZC=1` (zero-copy send path), `IOUTGT_IO_QUEUE_SIZE=N`
 (advertised IO MAXCMD ceiling; set below the host's depth, e.g. 64, to
 see the guest kernel clamp to N). The harness
 binds port **14420**, not 4420 — 4420 is often owned by other targets on
-a dev box. Host↔guest signalling goes through the vmtest 9p marker
+a dev box. Host↔guest signalling goes through the 9p marker
 directory, not env vars.
 
 ### Loopback load generator

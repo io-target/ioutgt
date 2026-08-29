@@ -25,6 +25,17 @@ LOG=/tmp/ioutgt-rdma.log
 
 fail() { echo "[rdma] RESULT: FAIL ($*)"; exit 1; }
 
+# Namespace devices present right now, sorted, one per line. Not
+# `ls /dev/nvme*n*`: with none present the glob does not expand, ls gets
+# the literal pattern and exits 2 -- harmless here (sort still succeeds)
+# but a script abort under `pipefail`. Glob-safe and always succeeds.
+nvme_ns_list() {
+	local d
+	for d in /dev/nvme*n*; do
+		if [ -b "$d" ]; then printf '%s\n' "$d"; fi
+	done | sort
+}
+
 echo "[rdma] loading rdma_rxe + nvme_rdma"
 modprobe nvme_rdma 2>&1 || true
 # shellcheck source=../common/rxe.sh
@@ -59,10 +70,10 @@ echo "[rdma] === nvme discover ==="
 timeout 20 nvme discover -t rdma -a "$IP" -s "$PORT" 2>&1 | head -20 || echo "[rdma] discover rc=$? (continuing)"
 
 echo "[rdma] === nvme connect ==="
-before=$(ls /dev/nvme*n* 2>/dev/null | sort)
+before=$(nvme_ns_list)
 timeout 20 nvme connect -t rdma -a "$IP" -s "$PORT" -n "$NQN" 2>&1 || fail "nvme connect (rc=$?)"
 udevadm settle 2>/dev/null || sleep 1
-after=$(ls /dev/nvme*n* 2>/dev/null | sort)
+after=$(nvme_ns_list)
 NS=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
 [ -n "${NS:-}" ] || fail "no namespace device appeared after connect"
 echo "[rdma] connected namespace: $NS"
@@ -98,10 +109,10 @@ for i in $(seq 1 8); do
 done
 udevadm settle 2>/dev/null || sleep 1
 # Final connect must still work + read after the churn.
-before2=$(ls /dev/nvme*n* 2>/dev/null | sort)
+before2=$(nvme_ns_list)
 nvme connect -t rdma -a "$IP" -s "$PORT" -n "$NQN" 2>&1 || fail "post-soak connect"
 udevadm settle 2>/dev/null || sleep 1
-after2=$(ls /dev/nvme*n* 2>/dev/null | sort)
+after2=$(nvme_ns_list)
 NS2=$(comm -13 <(echo "$before2") <(echo "$after2") | head -1)
 [ -n "${NS2:-}" ] || fail "post-soak no namespace appeared"
 dd if="$NS2" of=/dev/null bs=4096 count=64 iflag=direct 2>&1 || fail "post-soak read"

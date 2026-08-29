@@ -59,11 +59,10 @@ export TARGET_IP
 # whole disk contiguously — hard in this constrained VM), with a small
 # hugepage footprint (512 MiB of 2M pages).
 export TARGET_KINDS=spdk SPDK_BDEV=aio SPDK_BACKEND=/tmp/spdk-test.img BACKEND_GB=1 SPDK_HUGEMEM=512 FIO_SECS=5 FIO_JOBS=1 FIO_QD=16
-# NOTE: this VM boots with intel_iommu=on and no VFIO-bound device, so DPDK
-# cannot obtain DMA-mappable memory for a malloc/aio bdev (spdk_zmalloc ENOMEM)
-# — a property of the vmtest kernel cmdline, not the harness. --iova-mode=va is
-# the closest lever SPDK exposes; on bare metal (the 102 box) SPDK's setup.sh
-# binds the NVMe device to VFIO and this is a non-issue.
+# NOTE: DPDK still wants an explicit IOVA mode in this guest — there is no
+# VFIO-bound device to infer one from — so pin it rather than let EAL probe.
+# On bare metal (the 102 box) SPDK's setup.sh binds the NVMe device to VFIO
+# and this is a non-issue.
 export SPDK_EAL_EXTRA="${SPDK_EAL_EXTRA:---iova-mode=va -s 256}"
 LT=./testing/local_tgt.sh
 echo 256 > /proc/sys/vm/nr_hugepages 2>/dev/null || true

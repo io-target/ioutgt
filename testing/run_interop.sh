@@ -5,7 +5,7 @@
 set -eu
 
 TOP="$(cd "$(dirname "$0")/.." && pwd)"
-. "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF (env-overridable)
+. "$TOP/testing/common/vmtest.sh"     # RUN_VM + VMTEST_DATA_DIR + VM config
 # t/io_uring throughput probe for the ioutgt_bench guest test; published to
 # the guest via the 9p marker dir below (env does not cross into the VM).
 # Other tests ignore it; override for a different fio build.
@@ -144,7 +144,7 @@ done
 echo "ioutgt up (pid $TARGET_PID); starting VM test $TEST_NAME"
 
 set +e
-"$VMTEST" -c "$VMTEST_CONF" run "$TEST_SCRIPT"
+"$RUN_VM" "$TEST_SCRIPT"
 RC=$?
 set -e
 

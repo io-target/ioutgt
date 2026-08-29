@@ -17,8 +17,7 @@
 #   T_IO_URING           probe path, when run by hand inside the guest
 set -eu
 
-. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
-vt_load_config
+. "$(dirname "$0")/../common/vt.sh"
 vt_require_root
 vt_install_trap
 
