@@ -11,9 +11,9 @@ set -euo pipefail
 
 TOP="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$TOP"
-. "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF (env-overridable)
+. "$TOP/testing/common/vmtest.sh"     # RUN_VM + VMTEST_DATA_DIR + VM config
 
 cargo build --release -p ioutgt-nvme-rdma
 [ -x "$TOP/target/release/ioutgt-nvme-rdma" ] || { echo "FAIL: ioutgt-nvme-rdma release binary not built"; exit 1; }
 
-exec "$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_rdma_compare.sh"
+exec "$RUN_VM" "$TOP/testing/vmtest/ioutgt_rdma_compare.sh"

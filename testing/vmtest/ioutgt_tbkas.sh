@@ -14,10 +14,7 @@
 # be torn down mid-run.
 set -eu
 
-# Outside the vmtest checkout, so lib/ comes via VMTEST_DIR (run_vm
-# exports it into the guest).
-. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
-vt_load_config
+. "$(dirname "$0")/../common/vt.sh"
 vt_require_root
 vt_install_trap
 

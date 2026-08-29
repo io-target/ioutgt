@@ -218,5 +218,5 @@ sudo testing/capture-nvmet-fixtures.sh   # optional: kernel-nvmet pcap fixtures
 
 The VM harness binds port **14420** (4420 is the canonical NVMe port
 and is frequently owned by other targets on a development box) and
-publishes the port to the guest through the vmtest 9p marker
+publishes the port to the guest through the 9p marker
 directory; results land in `…/vmtest/data/tmp/ioutgt_result`.

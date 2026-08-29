@@ -33,8 +33,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
-vt_load_config
+. "$(dirname "$0")/../common/vt.sh"
 vt_require_root
 vt_install_trap
 vt_require_module nvme_tcp

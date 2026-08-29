@@ -3,9 +3,10 @@
 # vmtest-desc: ioutgt spread_cpus IO-thread placement on a multi-NUMA guest
 # vmtest-requires: root
 #
-# Guest-side CPU-affinity test: run ioutgt (pinning is default-on)
-# guest (vmtest.conf: VMTEST_NUMA_NODES > 1) and verify the userspace
-# spread_cpus placement against the guest's /sys topology:
+# Guest-side CPU-affinity test: run ioutgt (pinning is default-on) in a
+# multi-NUMA guest (VMTEST_NUMA_NODES > 1, set in
+# testing/common/vmtest.sh) and verify the userspace spread_cpus
+# placement against the guest's /sys topology:
 #   - one affinity group per IO thread, each group inside ONE NUMA node
 #   - groups pairwise disjoint and covering every possible CPU
 #   - every node serves at least one IO thread
@@ -14,13 +15,10 @@
 # Self-contained: run it by path, e.g.
 #
 #   testing/run_affinity.sh
-#   ~/git/utils/vmtest/vmtest -c <conf> run "$PWD/testing/vmtest/ioutgt_affinity.sh"
+#   testing/common/runner.sh testing/vmtest/ioutgt_affinity.sh
 set -eu
 
-# Outside the vmtest checkout, so lib/ comes via VMTEST_DIR (run_vm
-# exports it into the guest).
-. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
-vt_load_config
+. "$(dirname "$0")/../common/vt.sh"
 vt_require_root
 vt_install_trap
 
@@ -40,15 +38,12 @@ ioutgt_expand_cpulist() {
 ioutgt_run_affinity() {
     local top
     # BASH_SOURCE, not $0: this file is testing/vmtest/<me> whether it is
-    # executed by path or sourced from a tests/ stub, so the tree is two
-    # levels up either way. The marker is the fallback for a stub that
-    # copied us elsewhere; IOUTGT_DIR never arrives, as run_vm forwards
-    # only its own fixed set of variables into the guest.
+    # executed by path or sourced, so the tree is two levels up either
+    # way. The marker published by the host runner is the fallback.
     top="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
     [ -n "$top" ] && [ -d "$top/testing/vmtest" ] ||
         top=$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_top" 2>/dev/null || true)
-    [ -n "$top" ] ||
-        vt_die "no ioutgt checkout (missing ioutgt_top marker and IOUTGT_DIR)"
+    [ -n "$top" ] || vt_die "no ioutgt checkout (missing ioutgt_top marker)"
     local bin="$top/target/release/ioutgt-nvme-tcp"
     [ -x "$bin" ] || vt_die "no ioutgt binary at $bin (run testing/run_affinity.sh)"
 
@@ -61,7 +56,7 @@ ioutgt_run_affinity() {
     done
     local nodes=${#node_cpus[@]}
     [ "$nodes" -ge 2 ] ||
-        vt_skip "guest has $nodes NUMA node(s); set VMTEST_NUMA_NODES>=2 in vmtest.conf"
+        vt_skip "guest has $nodes NUMA node(s); set VMTEST_NUMA_NODES>=2 in testing/common/vmtest.sh"
     local ncpus
     ncpus=$(nproc)
     vt_log "guest: $ncpus CPUs, $nodes nodes (${node_cpus[*]})"

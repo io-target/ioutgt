@@ -1,19 +1,52 @@
-# vmtest.sh — shared vmtest launcher config, sourced by testing/run_*.sh.
-# Keeps the vmtest binary and its config file defined in one place instead of
-# repeated inline in every launcher. Both honor a pre-set environment variable,
-# so a single run can point elsewhere without editing this file:
-#   VMTEST=/path/vmtest VMTEST_CONF=/path/vmtest.conf testing/run_interop.sh
-VMTEST="${VMTEST:-$HOME/git/utils/vmtest/vmtest}"
-# The config ships with the repo (vmtest.conf, next to this file), so a
-# fresh checkout runs the VM tests without a private per-machine file.
-# Resolved from this file's own location, not the caller's $TOP or cwd.
+# vmtest.sh — host-side VM config, sourced by runner.sh (beside this file) and every
+# testing/run_*.sh launcher. The single place the VM's shape is defined.
+#
+# Every knob honours a pre-set environment variable, so one run can differ
+# without editing this file:
+#
+#   VMTEST_NUMA_NODES=1 testing/run_interop.sh
+#   KERNEL_DIR=~/git/linux-next testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
+#
+# Resolved from this file's own location, never the caller's cwd.
 _VMTEST_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VMTEST_CONF="${VMTEST_CONF:-$_VMTEST_SH_DIR/vmtest.conf}"
-unset _VMTEST_SH_DIR
+_VMTEST_TOP="$(cd "$_VMTEST_SH_DIR/../.." && pwd)"
 
-# Pull vmtest's resolved paths into this shell -- chiefly VMTEST_DATA_DIR,
-# which the runners need on the HOST to place the marker files the guest
-# reads. `vmtest env` applies environment > conf > default once and emits
-# shell assignments, so nothing here has to know where the conf points.
-eval "$("$VMTEST" -c "$VMTEST_CONF" env)"
-: "${VMTEST_DATA_DIR:?vmtest env did not resolve VMTEST_DATA_DIR}"
+# The launcher itself, so a runner does not have to spell out the path.
+RUN_VM="${RUN_VM:-$_VMTEST_TOP/testing/common/runner.sh}"
+
+# Kernel tree to boot. Machine-specific, so it normally comes from the
+# shell; the fallback keeps the common case working with no env set.
+KERNEL_DIR="${KERNEL_DIR:-$HOME/git/linux-ioutgt}"
+
+# The 9p share the guest mounts read-write: the tmp/ marker directory used
+# for host<->guest signalling, plus anything that must outlive the VM
+# (fio JSON, target logs, xfstests results). Kept inside the repo so a
+# checkout is self-contained; created on first use.
+VMTEST_DATA_DIR="${VMTEST_DATA_DIR:-$_VMTEST_TOP/testing/vmtest/data}"
+
+# Extra directories to share into the guest read-write, as a space-separated
+# list of raw vng --rwdir specs -- a bare path, or guestpath=hostpath:
+#
+#   VMTEST_RWDIR=/mnt/nvme testing/run_vmtest.sh testing/vmtest/ioutgt_fio.sh
+#   VMTEST_RWDIR="/mnt/nvme /data=/srv/data" testing/ioutgt_xfstests.sh
+#
+# VMTEST_DATA_DIR is always shared and does not need listing here. Useful
+# for putting backing images on a real filesystem instead of 9p.
+VMTEST_RWDIR="${VMTEST_RWDIR:-}"
+
+# VM sizing. A multi-NUMA guest is the default because
+# testing/run_affinity.sh needs more than one node to have anything to
+# check (spread_cpus placement is per-node); every other test is
+# indifferent, and the guest kernel needs CONFIG_NUMA=y either way.
+VMTEST_CPUS="${VMTEST_CPUS:-16}"
+VMTEST_MEM="${VMTEST_MEM:-8G}"
+VMTEST_NUMA_NODES="${VMTEST_NUMA_NODES:-4}"
+
+# User-mode networking: the guest reaches a host-side target at 10.0.2.2,
+# which is how every NVMe/TCP test connects. NET2 adds the second
+# interface the two-NIC tests use.
+VMTEST_NET="${VMTEST_NET:-1}"
+VMTEST_NET2="${VMTEST_NET2:-1}"
+
+mkdir -p "$VMTEST_DATA_DIR/tmp"
+unset _VMTEST_SH_DIR _VMTEST_TOP

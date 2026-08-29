@@ -12,7 +12,7 @@ REPO_TOP="$(cd "$(dirname "$0")/../.." && pwd)"
 # host side selects it and publishes the path through the marker dir,
 # the same channel run_interop.sh uses for the t/io_uring probe.
 # Read it from the marker, not from the environment: only a fixed set of
-# variables crosses into the guest (run_vm's GUEST_ENV), so an IOUTGT_*
+# variables crosses into the guest (the runner's GUEST_ENV), so an IOUTGT_*
 # override set here would never arrive. The launcher honours
 # IOUTGT_RDMA_TEST_BIN on the host and writes the result below.
 BIN="$(cat "${VMTEST_DATA_DIR:-/nonexistent}/tmp/ioutgt_rdma_test_bin" 2>/dev/null || true)"

@@ -8,7 +8,7 @@ set -euo pipefail
 
 TOP="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$TOP"
-. "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF (env-overridable)
+. "$TOP/testing/common/vmtest.sh"     # RUN_VM + VMTEST_DATA_DIR + VM config
 
 # Take the LIB test harness path from cargo itself: the deps/ glob is ambiguous
 # (the package's clap bin also lands there as ioutgt_nvme_rdma-<hash>, and
@@ -19,4 +19,4 @@ cd "$TOP"
 "$TOP/testing/common/prepare_rdma_loopback.sh"
 trap 'rm -f "$VMTEST_DATA_DIR/tmp/ioutgt_rdma_test_bin"' EXIT
 
-"$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_rdma_loopback.sh"
+"$RUN_VM" "$TOP/testing/vmtest/ioutgt_rdma_loopback.sh"

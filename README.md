@@ -137,8 +137,8 @@ testing/two_nic/realwire_tcp.sh down
 
 ## VM testing
 
-The VM tests run against [vmtest](https://github.com/ublk-org/vmtest), a
-thin harness over [virtme-ng](https://github.com/arighi/virtme-ng).
+The VM tests need only [virtme-ng](https://github.com/arighi/virtme-ng)
+(`vng`) on `PATH`; everything else ships with this checkout.
 
 The idea: no disk image — it boots the kernel from its source tree with
 the host filesystem shared in over 9p, so a test is a root shell script
@@ -146,9 +146,11 @@ running against your working tree in a throwaway guest. NVMe/TCP tests
 connect to a target on the host at `10.0.2.2`; the RDMA and affinity
 tests start theirs inside the guest.
 
-ioutgt's guest tests live in `testing/vmtest/`, the config it boots with
-is `testing/common/vmtest.conf`, and `KERNEL_DIR` selects the kernel
-tree:
+Guest tests live in `testing/vmtest/` and source `testing/common/vt.sh`
+for logging, a cleanup stack, and requirement checks;
+`testing/common/runner.sh` boots the VM and runs one of them.
+`testing/common/vmtest.sh` holds the config, every knob of which the
+environment can override:
 
 ```sh
 # one test: build ioutgt, start it on the host, boot the guest, tear down
@@ -159,10 +161,24 @@ testing/run_vmtest.sh testing/vmtest/
 
 # the M4-M8 interop matrix (discover/connect, fio --verify, filesystem)
 testing/run_interop.sh
+
+# a root shell in the guest instead of a test, for post-mortem poking
+testing/common/runner.sh --shell
 ```
 
-Point `VMTEST` at the harness if it is not at `~/git/utils/vmtest/vmtest`,
-and `VMTEST_CONF` at a different config to override the shipped one.
+`KERNEL_DIR` selects the kernel tree, `VMTEST_NUMA_NODES` the guest's
+NUMA shape (4 by default, so the affinity test has something to check),
+and `VMTEST_RWDIR` shares extra host directories in read-write — useful
+for putting backing images on a real filesystem instead of 9p:
+
+```sh
+VMTEST_RWDIR=/mnt/nvme testing/ioutgt_xfstests.sh
+```
+
+A test exits 0 for pass, 4 for skip (a prerequisite the guest lacks), and
+anything else for failure; a directory sweep reports the three
+separately, so a box missing an optional dependency does not read as
+broken.
 
 ## Requirements
 

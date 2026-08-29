@@ -3,21 +3,15 @@
 # vmtest-desc: ioutgt NVMe/TCP M4-M8 matrix (target on host)
 # vmtest-requires: root nvme-cli fio
 #
-# Self-contained entry point: runnable directly by vmtest, no stub in the
-# vmtest checkout's tests/ needed.
+#   testing/run_interop.sh                 # the default test
+#   testing/run_interop.sh ioutgt_nvme_tcp
 #
-#   testing/run_interop.sh "$PWD/testing/vmtest/ioutgt_nvme_tcp.sh"
+# or straight into the VM, against a target you started yourself:
 #
-# or straight through the harness:
-#
-#   ~/git/utils/vmtest/vmtest -c ~/git/linux-ioutgt/vmtest.conf \
-#       run "$PWD/testing/vmtest/ioutgt_nvme_tcp.sh"
+#   testing/common/runner.sh testing/vmtest/ioutgt_nvme_tcp.sh
 set -eu
 
-# We live outside the vmtest checkout, so lib/ is reached through
-# VMTEST_DIR (exported into the guest by run_vm).
-. "${VMTEST_DIR:?run me via vmtest}/lib/common.sh"
-vt_load_config
+. "$(dirname "$0")/../common/vt.sh"
 vt_require_root
 vt_install_trap
 

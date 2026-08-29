@@ -32,8 +32,8 @@
 #   testing/ioutgt_xfstests.sh generic/013 generic/020
 #   testing/ioutgt_xfstests.sh -x dio -g quick # exclude a group
 #
-# Host knobs (env): KERNEL_DIR (kernel tree to boot; overrides the conf),
-#   VMTEST, VMTEST_CONF (default testing/common/vmtest.conf),
+# Host knobs (env): KERNEL_DIR (kernel tree to boot), VMTEST_RWDIR (share a
+#   real filesystem into the guest, so the 8G images need not sit on 9p),
 #   IOUTGT_PROFILE (release|debug, default release),
 #   IOUTGT_XFSTESTS_TIMEOUT (outer VM wall-clock cap, default 200m).
 # Guest knobs (env): IMG_SIZE (default 8G), RUST_LOG (default info).
@@ -68,7 +68,7 @@ if [ "${1:-}" != "--guest" ]; then
 	[ ${#CHECK_ARGS[@]} -eq 0 ] && CHECK_ARGS=(-g quick)
 	TOP="$(cd "$(dirname "$0")/.." && pwd)"
 	cd "$TOP"
-	. "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF (env-overridable)
+	. "$TOP/testing/common/vmtest.sh"     # RUN_VM + VMTEST_DATA_DIR + VM config
 	PROFILE="${IOUTGT_PROFILE:-release}"
 	PROFILE_FLAG=""
 	[ "$PROFILE" = release ] && PROFILE_FLAG="--release"
@@ -95,7 +95,7 @@ if [ "${1:-}" != "--guest" ]; then
 	# their host absolute paths via 9p, so the script re-invokes itself in
 	# --guest mode straight out of the tree.
 	exec timeout --kill-after=30s "$RUN_TIMEOUT" \
-		"$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/ioutgt_xfstests.sh" \
+		"$RUN_VM" "$TOP/testing/ioutgt_xfstests.sh" \
 		--guest "$MODE" "$TCP_BIN" "$RDMA_BIN" "${CHECK_ARGS[@]}"
 fi
 
@@ -331,19 +331,30 @@ if [ "$MODE" = ioutgt ]; then
 fi
 
 # --- connect the in-kernel hosts, resolve each namespace by device diff ---
-# The guest already has an emulated PCI NVMe (/dev/nvme0n1); connecting one
-# transport at a time and diffing /dev/nvme*n* pins the *new* node without
-# guessing controller<->head instance numbers under native multipath.
+# Connecting one transport at a time and diffing the namespace list pins the
+# *new* node without guessing controller<->head instance numbers under native
+# multipath. The list starts empty in this guest, which the diff handles.
+#
+# Not `ls /dev/nvme*n*`: with none present the glob does not expand, ls gets
+# the literal pattern and exits 2 -- survivable here (guest mode runs without
+# -e) but an abort wherever `pipefail` is set. Glob-safe, always succeeds.
+nvme_ns_list() {
+	local d
+	for d in /dev/nvme*n*; do
+		if [ -b "$d" ]; then printf '%s\n' "$d"; fi
+	done | sort
+}
+
 connect_diff() { # $1=transport $2=addr $3=port $4=nqn -> prints new /dev node
 	local before after ns i
-	before=$(ls /dev/nvme*n* 2>/dev/null | sort)
+	before=$(nvme_ns_list)
 	nvme connect -t "$1" -a "$2" -s "$3" -n "$4" --nr-io-queues=4 >/dev/null 2>&1 || return 1
 	# The namespace gendisk registers asynchronously after connect returns,
 	# so poll the diff rather than sampling it once (otherwise two transports
 	# race and one node is missed).
 	for i in $(seq 1 50); do
 		udevadm settle 2>/dev/null || true
-		after=$(ls /dev/nvme*n* 2>/dev/null | sort)
+		after=$(nvme_ns_list)
 		ns=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
 		[ -n "$ns" ] && [ -b "$ns" ] && { echo "$ns"; return 0; }
 		sleep 0.2

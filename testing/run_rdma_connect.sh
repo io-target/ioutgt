@@ -9,7 +9,7 @@ set -euo pipefail
 
 TOP="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$TOP"
-. "$TOP/testing/common/vmtest.sh"     # VMTEST + VMTEST_CONF (env-overridable)
+. "$TOP/testing/common/vmtest.sh"     # RUN_VM + VMTEST_DATA_DIR + VM config
 
 cargo build -p ioutgt-nvme-rdma --bin ioutgt-nvme-rdma
 BIN="$TOP/target/debug/ioutgt-nvme-rdma"
@@ -18,4 +18,4 @@ BIN="$TOP/target/debug/ioutgt-nvme-rdma"
 # Run the in-tree script by path: no copy into the vmtest checkout, and
 # the guest keeps $0 inside this repo so the script finds the tree (and
 # the binary) itself instead of taking them as arguments.
-exec "$VMTEST" -c "$VMTEST_CONF" run "$TOP/testing/vmtest/ioutgt_rdma_connect.sh"
+exec "$RUN_VM" "$TOP/testing/vmtest/ioutgt_rdma_connect.sh"

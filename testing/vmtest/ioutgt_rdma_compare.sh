@@ -58,6 +58,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Namespace devices present right now, sorted, one per line.
+#
+# Not `ls /dev/nvme*n*`: with no NVMe device present the glob does not
+# expand, ls gets the literal pattern and exits 2, and under `pipefail`
+# that aborts the script. Redirecting ls's stderr hides the message but
+# not the status. Iterating and testing each candidate is glob-safe and
+# always succeeds, empty list included.
+nvme_ns_list() {
+	local d
+	for d in /dev/nvme*n*; do
+		if [ -b "$d" ]; then printf '%s\n' "$d"; fi
+	done | sort
+}
+
 # Drive one target (ioutgt|nvmet) through the shared verbs and crc32c-verify it.
 verify_one() {
 	local tgt="$1" before after dev ftmp
@@ -69,11 +83,11 @@ verify_one() {
 		for _ in $(seq 1 60); do grep -q "nvme-rdma listening" "$IOUTGT_LOG" 2>/dev/null && break; sleep 0.5; done
 		grep -q "nvme-rdma listening" "$IOUTGT_LOG" 2>/dev/null || { cat "$IOUTGT_LOG"; fail "$tgt never listened"; }
 	fi
-	before=$(ls /dev/nvme*n* 2>/dev/null | sort)
+	before=$(nvme_ns_list)
 	log "== [$tgt] connect =="
 	./testing/local_tgt.sh connect "$tgt"
 	udevadm settle 2>/dev/null || sleep 1
-	after=$(ls /dev/nvme*n* 2>/dev/null | sort)
+	after=$(nvme_ns_list)
 	dev=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
 	[ -n "$dev" ] || fail "$tgt: no namespace device after connect"
 	log "== [$tgt] fio --verify (4k randwrite, crc32c) on $dev =="
