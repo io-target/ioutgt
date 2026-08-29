@@ -187,7 +187,14 @@ impl SlotData {
         }
     }
 
-    /// Contiguous read view. Panics (debug) if the buffer is scattered.
+    /// Contiguous read view.
+    ///
+    /// # Panics
+    ///
+    /// Always, if the buffer is scattered -- not just in debug builds.
+    /// The assert is what makes the slice sound, so it cannot be
+    /// compiled out; check [`Self::is_contiguous`] first when a lease may
+    /// span segments, or use [`Self::segs`] to walk them.
     pub fn as_slice(&self) -> &[u8] {
         // A hard assert, not debug-only: on a scattered buffer `seg[0]` is
         // one page but `self.len` may be larger, so the slice would read
@@ -198,7 +205,11 @@ impl SlotData {
         unsafe { std::slice::from_raw_parts(self.segs[0].ptr, self.len) }
     }
 
-    /// Contiguous write view. Panics (debug) if the buffer is scattered.
+    /// Contiguous write view.
+    ///
+    /// # Panics
+    ///
+    /// Always, if the buffer is scattered -- see [`Self::as_slice`].
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         // Hard assert for the same reason as [`Self::as_slice`].
         assert!(self.is_contiguous(), "as_mut_slice on a scattered buffer");
