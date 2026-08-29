@@ -16,30 +16,74 @@
 # program and the guest rootfs is the host's, so it is present whenever
 # vng is; it is never an extra install.
 #
-# You normally reach it through one of the testing/run_*.sh
-# runners, which stand up a host-side target first and publish what the
-# guest needs through the marker directory.
-#
-# The guest sees the host filesystem over 9p, so the checkout, the built
-# binaries, and the script itself are all reachable at their host absolute
-# paths -- nothing is copied in, and a test is just a root shell script
-# running against the working tree in a throwaway VM. Config comes from
-# vmtest.sh beside this file (VMTEST_KERNEL, sizing, networking, shares).
+# The guest sees the host filesystem over 9p, so the project checkout, its
+# built binaries, and the script itself are all reachable at their host
+# absolute paths -- nothing is copied in, and a test is just a root shell
+# script running against the working tree in a throwaway VM.
 #
 # Exit status is the guest script's, and the codes are the contract a
 # sweep reads: 0 pass, 4 skip (a prerequisite the guest lacks), anything
 # else fail. Counting 4 apart is what keeps a sweep green on a box
 # missing an optional dependency.
+#
+# PROJECT-INDEPENDENT. Nothing here knows about any particular project;
+# copy it and vt.sh into another one as they are. A project supplies:
+#
+#   * a config file of `VAR="${VAR:-default}"` lines: vmtest.sh beside
+#     this file, or whatever VMTEST_CONFIG names. Everything has a
+#     default, so the file is optional.
+#   * guest test scripts, which source vt.sh relative to themselves.
+#   * whatever host-side setup those tests need, before invoking it.
+#
+# Knobs, all overridable from the environment:
+#
+#   VMTEST_KERNEL       build tree, kernel image, installed release, or
+#                       upstream tag        (default: the running kernel)
+#   VMTEST_DATA_DIR     9p share the guest mounts rw; its tmp/ is where
+#                       host<->guest marker files live
+#   VMTEST_RWDIR        extra shares, as raw vng --rwdir specs
+#   VMTEST_GUEST_ENV    extra NAME=VALUE pairs to forward into the guest
+#   VMTEST_PROJECT_DIR  guest cwd in --shell mode          (default: $PWD)
+#   VMTEST_CPUS / VMTEST_MEM / VMTEST_NUMA_NODES           (16 / 8G / 1)
+#   VMTEST_NET / VMTEST_NET2   user-mode NICs              (on / off)
+#   VMTEST_KCMDLINE_EXTRA / VMTEST_QEMU_EXTRA   appended verbatim
+#   VMTEST_MASK=0       do not hide $HOME/.ssh from the guest
+#   VMTEST_VNG          path to the vng binary             (default: vng)
 
 set -eu
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=vt.sh
 . "$SELF_DIR/vt.sh"
-TOP="$(cd "$SELF_DIR/../.." && pwd)"
-# shellcheck source=vmtest.sh
-. "$SELF_DIR/vmtest.sh"
 
+# Project configuration. This script knows nothing about the project it is
+# testing: every setting below has a working default, and a project
+# overrides what it needs through the environment or a config file of
+# plain `VAR="${VAR:-default}"` assignments: vmtest.sh beside this script,
+# or the file VMTEST_CONFIG names. It is sourced here and typically by the
+# project's own runners too, so keep it idempotent.
+if [ -n "${VMTEST_CONFIG:-}" ]; then
+    [ -r "$VMTEST_CONFIG" ] || vt_die "VMTEST_CONFIG=$VMTEST_CONFIG is not readable"
+    # shellcheck disable=SC1090
+    . "$VMTEST_CONFIG"
+elif [ -r "$SELF_DIR/vmtest.sh" ]; then
+    # shellcheck source=vmtest.sh
+    . "$SELF_DIR/vmtest.sh"
+fi
+
+# Defaults for whatever the project left unset. The kernel default is the
+# running one, so a project with no config at all still boots.
+: "${VMTEST_KERNEL:=$(uname -r)}"
+: "${VMTEST_PROJECT_DIR:=$PWD}"
+: "${VMTEST_DATA_DIR:=$SELF_DIR/data}"
+: "${VMTEST_CPUS:=16}"
+: "${VMTEST_MEM:=8G}"
+: "${VMTEST_NUMA_NODES:=1}"
+: "${VMTEST_NET:=1}"
+: "${VMTEST_NET2:=0}"
+: "${VMTEST_RWDIR:=}"
+: "${VMTEST_GUEST_ENV:=}"
+mkdir -p "$VMTEST_DATA_DIR/tmp"
 
 # `--shell` drops into an interactive root shell in the guest instead of
 # running a script. It must NOT go through virtme-ng's --exec path: in
@@ -146,9 +190,23 @@ done
 
 # Env the guest scripts want. VMTEST_DATA_DIR is the important one: it is
 # how a test finds the marker directory and where it writes anything that
-# must survive the VM. Guest scripts source vt.sh relative
-# to themselves, so nothing has to point back at this checkout.
+# must survive the VM. Guest scripts source vt.sh relative to themselves,
+# so nothing has to point back at the project checkout.
+#
+# VMTEST_GUEST_ENV carries whatever else a project's guest tests need, as
+# space-separated NAME=VALUE pairs -- paths to an out-of-tree build, say:
+#
+#   VMTEST_GUEST_ENV="UBLKSRV_DIR=$HOME/git/ublksrv LIBURING_DIR=..."
+#
+# env(1) takes them verbatim, so a value containing whitespace needs a
+# different channel (the marker directory, as the port and probe paths do).
 GUEST_ENV="VMTEST_DATA_DIR=$VMTEST_DATA_DIR"
+for kv in $VMTEST_GUEST_ENV; do
+    case "$kv" in
+    *=*) GUEST_ENV="$GUEST_ENV $kv" ;;
+    *) vt_die "VMTEST_GUEST_ENV entry '$kv' is not NAME=VALUE" ;;
+    esac
+done
 
 # A guest PATH including any cargo-installed bin dirs on the host: /home is
 # exposed into the guest, so those paths resolve at the same absolute
@@ -231,6 +289,7 @@ fi
 #    kind this runner sets up, and SLIRP hands out exactly 10.0.2.15/24 via
 #    10.0.2.2 every time, so a static assignment is what DHCP would have
 #    done. Only when the guest has networking at all (virtme.dhcp on the
+#    cmdline, the same gate virtme-init uses).
 PRELUDE="$TMPDIR/vmtest-prelude.sh"
 # The nosuid pass is ONLY needed (and only applied) when the mask is active:
 # without the user namespace, setuid binaries work normally and the guest
@@ -330,7 +389,7 @@ if [ -n "$SHELL_MODE" ]; then
         done
         printf 'export TERM=%q\n' "${TERM:-xterm}"
         printf 'bash %q\n' "$PRELUDE"
-        printf 'cd %q 2>/dev/null || true\n' "$TOP"
+        printf 'cd %q 2>/dev/null || true\n' "$VMTEST_PROJECT_DIR"
         echo 'exec bash -i'
     } > "$WRAPPER"
     chmod +x "$WRAPPER"
