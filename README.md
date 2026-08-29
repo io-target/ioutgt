@@ -137,55 +137,19 @@ testing/two_nic/realwire_tcp.sh down
 
 ## VM testing
 
-The VM tests need only [virtme-ng](https://github.com/arighi/virtme-ng)
-(`vng`) on `PATH`; everything else ships with this checkout.
-
-The idea: no disk image — it boots the kernel from its source tree with
-the host filesystem shared in over 9p, so a test is a root shell script
-running against your working tree in a throwaway guest. NVMe/TCP tests
-connect to a target on the host at `10.0.2.2`; the RDMA and affinity
-tests start theirs inside the guest.
-
-Guest tests live in `testing/vmtest/` and source `testing/common/vt.sh`
-for logging, a cleanup stack, and requirement checks;
-`testing/common/runner.sh` boots the VM and runs one of them.
-`testing/common/vmtest.sh` holds the config, every knob of which the
-environment can override:
+The acceptance tests run the kernel NVMe host against ioutgt inside a
+throwaway [virtme-ng](https://github.com/arighi/virtme-ng) guest. They
+need only `vng` on `PATH` — no disk image, no kernel build: the guest
+boots the kernel the host is running and sees the checkout over 9p.
 
 ```sh
-# one test: build ioutgt, start it on the host, boot the guest, tear down
-VMTEST_KERNEL=$(uname -r) testing/run_vmtest.sh testing/vmtest/ioutgt_tbkas.sh
-
-# every test under a directory, each in its own VM, with a pass/fail summary
-testing/run_vmtest.sh testing/vmtest/
-
-# the M4-M8 interop matrix (discover/connect, fio --verify, filesystem)
-testing/run_interop.sh
-
-# a root shell in the guest instead of a test, for post-mortem poking
-testing/common/runner.sh --shell
+testing/run_interop.sh                  # the M4-M8 interop matrix
+testing/run_vmtest.sh testing/vmtest/   # every guest test, with a pass/fail summary
+VMTEST_KERNEL=~/git/linux-next testing/run_interop.sh   # a kernel under development
 ```
 
-`VMTEST_KERNEL` selects the kernel, in any form `vng --run` takes: a
-built tree, a kernel image, an upstream tag it downloads, or an installed
-release — so the distribution's own kernel needs no source tree and no
-build at all, which is the quickest way to check ioutgt against a stock,
-shipped initiator. It defaults to the kernel the host is running, and
-the runner logs which kernel it booted and how it resolved it.
-
-`VMTEST_NUMA_NODES` sets the guest's NUMA shape (4 by default, so the
-affinity test has something to check), and `VMTEST_RWDIR` shares extra
-host directories in read-write — useful for putting backing images on a
-real filesystem instead of 9p:
-
-```sh
-VMTEST_RWDIR=/mnt/nvme testing/ioutgt_xfstests.sh
-```
-
-A test exits 0 for pass, 4 for skip (a prerequisite the guest lacks), and
-anything else for failure; a directory sweep reports the three
-separately, so a box missing an optional dependency does not read as
-broken.
+The harness, its knobs, and how to reuse it in another project are
+described in [`testing/README.md`](testing/README.md).
 
 ## Requirements
 
