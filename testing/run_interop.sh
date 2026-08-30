@@ -67,6 +67,16 @@ CTL_SOCK="$TOP/target/ioutgt-interop.sock"
 MARKER_DIR="$VMTEST_DATA_DIR/tmp"
 PID_FILE="$TOP/target/ioutgt-interop.pid"
 
+# Only one run at a time: two sharing $TOP/target would overwrite each
+# other's pid file and fight over the port, and the loser's cleanup would
+# then kill the winner's pid -- or kill nothing and leave a target squatting
+# the port for every run after.
+exec 9>"$TOP/target/ioutgt-hosttarget.lock"
+flock -n 9 || {
+    echo "another host-target run is in progress (lock: target/ioutgt-hosttarget.lock)" >&2
+    exit 2
+}
+
 # Kill the target (and watcher) however the script exits: a surviving
 # target squats the port and poisons the next harness or bench run.
 # Installed before anything starts so an early failure cannot leak;
@@ -74,8 +84,17 @@ PID_FILE="$TOP/target/ioutgt-interop.pid"
 # can never kill an unrelated reused pid.
 rm -f "$PID_FILE"
 WATCHER_PID=""
+TARGET_PID=""
 cleanup() {
-    [ -s "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    # Kill by the pid we remember AND by whatever the file says. Neither
+    # alone is enough: the file can vanish (and then `[ -s ]` silently
+    # skips the kill, leaking the target), while the watcher's kill/restart
+    # path replaces the process and records the new pid only in the file.
+    local filed
+    filed=$(cat "$PID_FILE" 2>/dev/null || true)
+    for _p in "$TARGET_PID" "$filed"; do
+        [ -n "$_p" ] && kill "$_p" 2>/dev/null || true
+    done
     [ -n "$WATCHER_PID" ] && kill "$WATCHER_PID" 2>/dev/null || true
     # Drop the checkout marker so a later manual vmtest run cannot pick
     # up a stale path (run_affinity.sh does the same).
@@ -113,7 +132,13 @@ TARGET_PID=$(cat "$PID_FILE")
 [ "${IOUTGT_ENABLE_KILL:-0}" = "1" ] && : > "$MARKER_DIR/ioutgt_kill_enabled"
 
 # Watcher: serves guest-driven events — M7 hot-add and M8 kill/restart.
+#
+# It tracks the target in a variable rather than re-reading the pid file
+# each pass: deriving liveness from the file meant a vanished file read as
+# "target gone", so the watcher exited and silently stopped serving the
+# hot-add — the guest then failed M7 with no indication why on the host.
 (
+    cur=$TARGET_PID
     while :; do
         sleep 0.5
         if [ -f "$MARKER_DIR/ioutgt_want_ns2" ]; then
@@ -125,12 +150,13 @@ TARGET_PID=$(cat "$PID_FILE")
         if [ -f "$MARKER_DIR/ioutgt_want_kill" ]; then
             rm -f "$MARKER_DIR/ioutgt_want_kill"
             echo "watcher: kill -9 target" >>"$LOG"
-            kill -9 "$(cat "$PID_FILE")" 2>/dev/null || true
+            kill -9 "$cur" 2>/dev/null || true
             sleep 2
             start_target
-            echo "watcher: target restarted (pid $(cat "$PID_FILE"))" >>"$LOG"
+            cur=$(cat "$PID_FILE" 2>/dev/null || true)
+            echo "watcher: target restarted (pid $cur)" >>"$LOG"
         fi
-        kill -0 "$(cat "$PID_FILE")" 2>/dev/null || exit 0
+        kill -0 "$cur" 2>/dev/null || exit 0
     done
 ) &
 WATCHER_PID=$!
@@ -148,7 +174,11 @@ set +e
 RC=$?
 set -e
 
-FINAL_PID=$(cat "$PID_FILE" 2>/dev/null)
+# The file first (the watcher's restart path records the live pid only
+# there), falling back to the one we started -- otherwise a missing file
+# turns the IOUTGT_SOAK_ONLY RSS gate below into a silent no-op.
+FINAL_PID=$(cat "$PID_FILE" 2>/dev/null || true)
+[ -n "$FINAL_PID" ] || FINAL_PID=$TARGET_PID
 if [ -n "$FINAL_PID" ] && [ -r "/proc/$FINAL_PID/status" ]; then
     RSS_KB=$(awk '/VmRSS/{print $2}' "/proc/$FINAL_PID/status")
     echo "--- target RSS after run: $RSS_KB kB ---"
