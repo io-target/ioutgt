@@ -154,7 +154,7 @@ described in [`testing/README.md`](testing/README.md).
 ## Requirements
 
 - Linux ≥ 6.11 (`DEFER_TASKRUN` + multishot era; developed on 7.1)
-- Rust ≥ 1.88 stable
+- Rust ≥ 1.89 stable
 - clang libs ≤ 19 for building `ioutgt-nvme-rdma`: its `rdma-mummy-sys`
   dependency runs bindgen at build time, which fails against
   clang-libs-22 (see

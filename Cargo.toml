@@ -16,7 +16,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/io-target/ioutgt"
@@ -43,7 +43,15 @@ libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
 slab = "0.4"
 zerocopy = { version = "0.8", features = ["derive"] }
-crc32c = "0.6"
+# NVMe/TCP digests (CRC32C): folds with pclmulqdq/vpclmulqdq, ~1.6x the
+# crc32c crate built with +sse4.2 on the DDGST path. See the module docs in
+# crates/ioutgt-nvme/src/digest.rs.
+# Do not drop `std` to trim the tree: it gates the SIMD dispatch itself
+# (`is_x86_feature_detected!` needs it), so without it every digest falls
+# back to a byte-at-a-time table -- and on x86_64 crc-fast does not even
+# compile, its arch backend importing `std::arch` rather than `core::arch`.
+# `["std"]` is minimal; default-features off drops only `ffi`/`panic-handler`.
+crc-fast = { version = "1.10", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Safe ibverbs + RDMA-CM bindings linking the system rdma-core (see

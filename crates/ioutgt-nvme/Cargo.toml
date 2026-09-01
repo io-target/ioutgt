@@ -14,7 +14,7 @@ ioutgt-core = { workspace = true }
 ioutgt-cpus = { workspace = true }
 tracing = { workspace = true }
 zerocopy = { workspace = true }
-crc32c = { workspace = true }
+crc-fast = { workspace = true }
 
 [lints]
 workspace = true
