@@ -41,7 +41,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   msrv:
-    name: MSRV (1.88) check
+    name: MSRV (1.89) check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
           echo "LIBCLANG_PATH=/usr/lib/llvm-19/lib" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
 

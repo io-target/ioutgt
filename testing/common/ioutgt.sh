@@ -17,7 +17,6 @@ IOUTGT_EXTRA="${IOUTGT_EXTRA:-}"
 ioutgt_start() {
     local nqn="$1" port="$2" ip="$3" backend="$4"
     [ -x "$IOUTGT_BIN" ] || { echo "build the $TRANSPORT target first (cargo build --release; or set IOUTGT_BIN=$IOUTGT_BIN)"; exit 1; }
-    BACKEND="$backend" ensure_backing || exit 1
     local zc=() zclabel=
     if [ "$IOUTGT_SENDZC" != 0 ] && [ "$TRANSPORT" = tcp ]; then
         zc=(--send-zc); zclabel=", send-zc"
@@ -29,12 +28,22 @@ ioutgt_start() {
     fi
     local extra=()
     [ -n "$IOUTGT_EXTRA" ] && read -ra extra <<<"$IOUTGT_EXTRA"
+    # ioutgt's in-process backends need nothing on disk, but they do need a
+    # size: with no file to inherit one from they would advertise the
+    # binary's 64 MiB default and fio_verify's per-job layout would overrun
+    # the namespace.
+    local size=()
+    case "$backend" in
+        null | memory) size=(--mem-size-mb $((BACKEND_GB * 1024))) ;;
+        *) BACKEND="$backend" ensure_backing || exit 1 ;;
+    esac
     echo ">> starting ioutgt on $ip:$port (backend $backend, ${NR_QUEUES}q x $QUEUE_SIZE$zclabel${IOUTGT_EXTRA:+, $IOUTGT_EXTRA})"
     "${IOUTGT_NETNS[@]}" "$IOUTGT_BIN" \
         --listen "$ip:$port" \
         --backend "$backend" \
         --io-threads "$NR_QUEUES" \
         --io-queue-size "$QUEUE_SIZE" \
+        "${size[@]}" \
         "${zc[@]}" \
         "${extra[@]}" \
         "${IOUTGT_DGST[@]}" \

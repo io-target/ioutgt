@@ -9,6 +9,28 @@ use ioutgt_harness::client::{ctl, list_target, stat_target};
 
 use clap::{Parser, Subcommand};
 
+/// clap-side mirror of [`ioutgt_nvme::digest::CrcKernel`], keeping CLI
+/// parsing out of the codec crate.
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum CrcKernelArg {
+    /// Resolve from the CPU (see the digest module docs).
+    Auto,
+    /// crc-fast's CRC-32/ISCSI special case.
+    Fusion,
+    /// crc-fast's generic folding calculator.
+    Generic,
+}
+
+impl From<CrcKernelArg> for ioutgt_nvme::digest::CrcKernel {
+    fn from(arg: CrcKernelArg) -> Self {
+        match arg {
+            CrcKernelArg::Auto => Self::Auto,
+            CrcKernelArg::Fusion => Self::Fusion,
+            CrcKernelArg::Generic => Self::Generic,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about = "io_uring-based NVMe/TCP target")]
 struct Args {
@@ -34,6 +56,16 @@ struct Args {
     /// Refuse data digest negotiation.
     #[arg(long)]
     no_ddgst: bool,
+
+    /// CRC32C folding kernel for the TCP digests.
+    ///
+    /// Identical digests either way; only which crc-fast path folds the
+    /// bytes. Which is faster is microarchitectural, so `auto` reads
+    /// avx512vl as a proxy for the server case -- see the digest module docs
+    /// -- and you settle it for real with:
+    /// cargo run --release -p ioutgt-nvme --example crc_bench
+    #[arg(long, value_enum, default_value = "auto")]
+    crc_kernel: CrcKernelArg,
 
     /// Disable topology-aware IO thread pinning (on by default).
     #[arg(long)]
@@ -180,6 +212,11 @@ fn main() -> std::io::Result<()> {
             } => return stat_target(&sock(socket), *interval, *clear),
         }
     }
+
+    // Read on the IO path, so resolve before any queue thread exists.
+    let kernel = ioutgt_nvme::digest::CrcKernel::from(args.crc_kernel);
+    let active = ioutgt_nvme::digest::select_kernel(kernel);
+    tracing::info!(requested = %kernel, active = %active, "crc32c kernel");
 
     let mut config =
         ioutgt_nvme_tcp::TargetConfig::single_memory(&args.subsys_nqn, args.mem_size_mb);

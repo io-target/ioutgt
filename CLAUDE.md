@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 ioutgt is a userspace NVMe/TCP storage target built on io_uring, in Rust
-(edition 2024, MSRV 1.88, Linux ≥ 6.11). `docs/architecture.md` is the
+(edition 2024, MSRV 1.89, Linux ≥ 6.11). `docs/architecture.md` is the
 authoritative as-built spec — thread model, reactor, command-slot
 lifecycle, crate map, milestone status. Keep it updated when behavior
 changes.

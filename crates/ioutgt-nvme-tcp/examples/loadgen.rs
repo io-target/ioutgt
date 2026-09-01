@@ -34,6 +34,16 @@
 //! - `--secs N`  run duration in seconds. Default 10.
 //! - `--rw randread|randwrite`  read or write workload; LBAs are random
 //!   within the namespace. Default randread.
+//! - `--ddgst`  negotiate the NVMe/TCP data digest (CRC32C over every
+//!   payload byte, both ends). Off by default, matching the kernel host.
+//!   This is how to size a change to the target's digest code: a kernel
+//!   initiator computes the digest too, and on loopback that lands on the
+//!   same CPUs, so most of the apparent cost is the initiator's. Here both
+//!   ends are ours in separate processes, so the target's share is readable
+//!   from its own CPU time -- loadgen reports only IOPS, so bracket the run
+//!   with two reads of the target's /proc/<pid>/stat; where the target is
+//!   not CPU-bound, IOPS will not move and the CPU delta is the whole
+//!   signal. Writes carry the trailer, reads verify it, a mismatch panics.
 //!
 //! Net: `conns` connections each pipeline `qd` random `bs`-sized `rw`
 //! ops for `secs` seconds.
@@ -64,7 +74,12 @@ use std::time::{Duration, Instant};
 
 use ioutgt_nvme::fabrics::{ConnectCommand, ConnectData, fctype};
 use ioutgt_nvme::pdu::{self, PduDecoder, PduKind};
-use ioutgt_nvme::{spec, status};
+use ioutgt_nvme::{digest, spec, status};
+
+/// CRC32C of any payload followed by its own little-endian digest. Checking
+/// a C2HData PDU is therefore one comparison against this, with no need to
+/// hold the four trailer bytes apart from the payload.
+const DDGST_RESIDUE: u32 = 0x4867_4BC7;
 use zerocopy::{FromBytes, FromZeros, IntoBytes};
 
 const NQN: &str = "nqn.2026-06.io.ioutgt:test";
@@ -86,6 +101,8 @@ struct Args {
     secs: u64,
     /// `true` = randwrite, `false` = randread.
     write: bool,
+    /// Negotiate the NVMe/TCP data digest (CRC32C over every payload byte).
+    ddgst: bool,
 }
 
 fn parse_args() -> Args {
@@ -97,6 +114,7 @@ fn parse_args() -> Args {
         bs: 4096,
         secs: 10,
         write: false,
+        ddgst: false,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(flag) = iter.next() {
@@ -109,20 +127,35 @@ fn parse_args() -> Args {
             "--bs" => args.bs = value().parse().unwrap(),
             "--secs" => args.secs = value().parse().unwrap(),
             "--rw" => args.write = value() == "randwrite",
+            "--ddgst" => args.ddgst = true,
             other => panic!("unknown flag {other}"),
         }
     }
     args
 }
 
-fn handshake(addr: &str) -> TcpStream {
+fn handshake(addr: &str, ddgst: bool) -> TcpStream {
     let mut stream = TcpStream::connect(addr).expect("connect");
     stream.set_nodelay(true).unwrap();
     let mut buf = [0u8; 128];
-    let n = pdu::encode_icreq(&mut buf, false, false, 4);
+    let n = pdu::encode_icreq(&mut buf, false, ddgst, 4);
     stream.write_all(&buf[..n]).unwrap();
     let mut resp = [0u8; 128];
     stream.read_exact(&mut resp).unwrap();
+    // A target may refuse (ioutgt under --no-ddgst). Running on regardless
+    // would measure the wrong configuration silently.
+    let icresp = pdu::IcResp::read_from_bytes(&resp[..]).expect("ICResp is 128 bytes");
+    assert_eq!(
+        icresp.hdr.pdu_type,
+        pdu::pdu_type::ICRESP,
+        "expected ICResp, got PDU type {:#x} (a C2HTermReq here means the ICReq was rejected)",
+        icresp.hdr.pdu_type
+    );
+    let granted = icresp.digest & pdu::DIGEST_DDGST != 0;
+    assert_eq!(
+        granted, ddgst,
+        "target did not grant the requested data digest (asked {ddgst}, got {granted})"
+    );
     stream
 }
 
@@ -148,7 +181,7 @@ fn read_pdu(
     }
 }
 
-fn nvme_connect(stream: &mut TcpStream, qid: u16, sqsize: u16, cntlid: u16) -> u16 {
+fn nvme_connect(stream: &mut TcpStream, qid: u16, sqsize: u16, cntlid: u16, ddgst: bool) -> u16 {
     let mut cmd: ConnectCommand = FromZeros::new_zeroed();
     cmd.opcode = spec::admin_opcode::FABRICS;
     cmd.fctype = fctype::CONNECT;
@@ -166,9 +199,15 @@ fn nvme_connect(stream: &mut TcpStream, qid: u16, sqsize: u16, cntlid: u16) -> u
     let sqe = spec::Sqe::read_from_bytes(cmd.as_bytes()).unwrap();
     let mut frame = Vec::new();
     let mut hdr = [0u8; 80];
-    let n = pdu::encode_capsule_cmd(&mut hdr, &sqe, false, 1024, false);
+    // 1024 B of inline data, so with the digest negotiated it carries a
+    // trailer, as the kernel host does -- the only path here that exercises
+    // the target's Connect-data digest check.
+    let n = pdu::encode_capsule_cmd(&mut hdr, &sqe, false, 1024, ddgst);
     frame.extend_from_slice(&hdr[..n]);
     frame.extend_from_slice(data.as_bytes());
+    if ddgst {
+        frame.extend_from_slice(&digest::crc32c(data.as_bytes()).to_le_bytes());
+    }
     stream.write_all(&frame).unwrap();
 
     let mut decoder = PduDecoder::new(false);
@@ -229,12 +268,13 @@ fn worker(
     sqsize: u16,
     bs: u32,
     write: bool,
+    ddgst: bool,
     stop: Arc<AtomicBool>,
     total_ops: Arc<AtomicU64>,
     seed: u64,
 ) -> Vec<u64> {
-    let mut stream = handshake(&addr);
-    nvme_connect(&mut stream, qid, sqsize, cntlid);
+    let mut stream = handshake(&addr, ddgst);
+    nvme_connect(&mut stream, qid, sqsize, cntlid, ddgst);
     eprintln!("# worker qid={qid} connected");
     let mut rx = stream.try_clone().expect("clone");
 
@@ -263,7 +303,15 @@ fn worker(
             // turning the client into the bottleneck under test.
             let mut decoder = PduDecoder::new(false);
             let mut buf = vec![0u8; 256 * 1024];
+            // Folding a payload together with its own trailing digest lands
+            // on a constant, the CRC residue -- so the trailer needs no
+            // separate state, and arriving split across recvs is not a case
+            // to handle. `fold` is the CURRENT PDU's flag, not the
+            // connection's: a C2HTermReq carries data but no digest, and
+            // folding it would poison the next PDU's check.
             let mut skip = 0usize;
+            let mut fold = false;
+            let mut crc = digest::Crc32c::new();
             loop {
                 let n = match rx.read(&mut buf) {
                     Ok(0) | Err(_) => return,
@@ -273,8 +321,21 @@ fn worker(
                 while !slice.is_empty() {
                     if skip > 0 {
                         let take = skip.min(slice.len());
+                        // Fold as the bytes go past: reporting throughput
+                        // for a digest nobody checked defeats the purpose.
+                        if fold {
+                            crc.update(&slice[..take]);
+                        }
                         skip -= take;
                         slice = &slice[take..];
+                        if skip == 0 && fold {
+                            assert_eq!(
+                                crc.finalize(),
+                                DDGST_RESIDUE,
+                                "C2H data digest mismatch from target"
+                            );
+                            crc = digest::Crc32c::new();
+                        }
                         continue;
                     }
                     let consumed = decoder.feed(slice).expect("decode");
@@ -284,6 +345,7 @@ fn worker(
                         continue;
                     }
                     let decoded = decoder.take().expect("take");
+                    fold = decoded.ddgst;
                     skip = decoded.data_len as usize + if decoded.ddgst { 4 } else { 0 };
                     match decoded.kind {
                         PduKind::CapsuleResp(cqe) => {
@@ -323,13 +385,13 @@ fn worker(
         })
     };
 
-    // Answer one R2T: header + payload slice, LAST set, digests off
-    // (the icreq negotiated hdgst/ddgst false/false). The target
-    // solicits the whole transfer with a single R2T, so one H2CData
-    // per command suffices at MDTS sizes.
+    // Header + payload slice, LAST set, DDGST trailer when negotiated. The
+    // target solicits the whole transfer in one R2T, so one H2CData per
+    // command suffices at MDTS sizes.
     fn answer_r2t(
         stream: &mut TcpStream,
         payload: &[u8],
+        ddgst: bool,
         cid: u16,
         ttag: u16,
         offset: u32,
@@ -342,10 +404,16 @@ fn worker(
         // ever moves to partial R2Ts.
         let last = end == payload.len();
         let mut hdr = [0u8; 32];
-        let n = pdu::encode_h2c_data(&mut hdr, cid, ttag, offset, length, last, false, false);
-        let mut frame = Vec::with_capacity(n + length as usize);
+        let n = pdu::encode_h2c_data(&mut hdr, cid, ttag, offset, length, last, false, ddgst);
+        let mut frame = Vec::with_capacity(n + length as usize + 4);
         frame.extend_from_slice(&hdr[..n]);
-        frame.extend_from_slice(&payload[offset as usize..end]);
+        let data = &payload[offset as usize..end];
+        frame.extend_from_slice(data);
+        if ddgst {
+            // Per PDU, not precomputed from the constant pattern: this is
+            // the initiator's share and belongs in loadgen's CPU.
+            frame.extend_from_slice(&digest::crc32c(data).to_le_bytes());
+        }
         stream.write_all(&frame).is_ok()
     }
 
@@ -370,7 +438,7 @@ fn worker(
                     offset,
                     length,
                 }) => {
-                    if !answer_r2t(&mut stream, &payload, cid, ttag, offset, length) {
+                    if !answer_r2t(&mut stream, &payload, ddgst, cid, ttag, offset, length) {
                         break 'tx;
                     }
                 }
@@ -389,7 +457,7 @@ fn worker(
                     offset,
                     length,
                 }) => {
-                    if !answer_r2t(&mut stream, &payload, cid, ttag, offset, length) {
+                    if !answer_r2t(&mut stream, &payload, ddgst, cid, ttag, offset, length) {
                         break;
                     }
                 }
@@ -425,10 +493,13 @@ fn worker(
         let mut frame = Vec::with_capacity(72 + payload.len());
         let mut hdr = [0u8; 80];
         let inline = if write && bs <= 16 * 1024 { bs } else { 0 };
-        let n = pdu::encode_capsule_cmd(&mut hdr, &sqe, false, inline, false);
+        let n = pdu::encode_capsule_cmd(&mut hdr, &sqe, false, inline, ddgst);
         frame.extend_from_slice(&hdr[..n]);
         if inline > 0 {
             frame.extend_from_slice(&payload);
+            if ddgst {
+                frame.extend_from_slice(&digest::crc32c(&payload).to_le_bytes());
+            }
         }
         let now = u64::try_from(epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
         starts[usize::from(cid)].store(now, Ordering::Relaxed);
@@ -445,6 +516,9 @@ fn worker(
 
 fn main() {
     let mut args = parse_args();
+    // Match the target's default so the initiator's share of the digest is
+    // as small as the target's, not the unconfigured fusion fallback.
+    digest::select_kernel(digest::CrcKernel::Auto);
     // Default sqsize auto-fits the depth: the target allocates one slot per
     // negotiated entry and all are usable, so qd outstanding needs sqsize ==
     // qd (this matches the kernel, where nr_tags == MAXCMD). The common case
@@ -461,9 +535,12 @@ fn main() {
         args.sqsize
     );
 
-    // Admin connection holds the controller open.
-    let mut admin = handshake(&args.addr);
-    let cntlid = nvme_connect(&mut admin, 0, 32, 0xFFFF);
+    // Admin connection holds the controller open. It negotiates the same
+    // digest as the IO queues: a kernel host ties the setting to the
+    // controller, and a mixed-digest controller is a shape no real initiator
+    // produces (it would also skip the Connect-data digest check here).
+    let mut admin = handshake(&args.addr, args.ddgst);
+    let cntlid = nvme_connect(&mut admin, 0, 32, 0xFFFF, args.ddgst);
     eprintln!("# admin connected, cntlid={cntlid}");
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -476,6 +553,7 @@ fn main() {
             let stop = Arc::clone(&stop);
             let total_ops = Arc::clone(&total_ops);
             let (qd, sqsize, bs, write) = (args.qd, args.sqsize, args.bs, args.write);
+            let ddgst = args.ddgst;
             std::thread::spawn(move || {
                 worker(
                     addr,
@@ -485,6 +563,7 @@ fn main() {
                     sqsize,
                     bs,
                     write,
+                    ddgst,
                     stop,
                     total_ops,
                     0x1234_5678 + i as u64,
@@ -512,7 +591,7 @@ fn main() {
         latencies[idx] as f64 / 1000.0
     };
     println!(
-        "ops={ops} iops={:.0} bw={:.1} MiB/s lat_us p50={:.1} p99={:.1} p999={:.1} (conns={} qd={} bs={} rw={})",
+        "ops={ops} iops={:.0} bw={:.1} MiB/s lat_us p50={:.1} p99={:.1} p999={:.1} (conns={} qd={} bs={} rw={}{})",
         ops as f64 / elapsed,
         ops as f64 / elapsed * f64::from(args.bs) / (1 << 20) as f64,
         pct(0.50),
@@ -522,5 +601,6 @@ fn main() {
         args.qd,
         args.bs,
         if args.write { "randwrite" } else { "randread" },
+        if args.ddgst { " ddgst=on" } else { "" },
     );
 }
