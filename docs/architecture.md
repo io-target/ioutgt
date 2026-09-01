@@ -303,6 +303,18 @@ The obligations any transport must meet are the contract in §5.1.
   mirroring nvmet's, in-capsule ≤ 16 KiB + single-R2T writes, CRC32C
   digests, batch-drained gather send with opt-in `SENDMSG_ZC`, opt-in
   per-connection provided-buffer recv ring (`--recv-buf-mb`).
+  The data digest (DDGST) is the only per-byte compute on the IO path,
+  so it folds with `crc-fast` (pclmulqdq/vpclmulqdq) rather than the
+  scalar crc32 instruction. Which of crc-fast's two kernels is faster
+  is microarchitectural rather than a CPUID property: on an EPYC 9124
+  the CRC-32/ISCSI special case ("fusion") wins at every size, by
+  3.2-4.5x at 512 B and 1.14-1.33x at 4 KiB, while on a Core Ultra 9
+  285H the generic folding calculator wins by 1.28-1.43x on the
+  P-cores and loses again on the E-cores. So `--crc-kernel
+  auto|fusion|generic` makes it a deployment choice; `auto` reads
+  `avx512vl` as a proxy for the server case, and `crc_bench` (pinned to
+  the cores the IO threads use) settles it for real. Both kernels are
+  bit-identical on the wire; only speed differs.
 - **NVMe/RDMA** ([`docs/nvme-rdma.md`](nvme-rdma.md)) — keyed-SGL
   one-sided data movement (target-posted RDMA READ/WRITE), rdma_cm
   acceptance on a dedicated CM reactor thread, batched WR doorbells,
